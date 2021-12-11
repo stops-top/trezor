@@ -24,9 +24,10 @@ BITCOIN_ONLY ?= 0
 TREZOR_MODEL ?= T
 TREZOR_MEMPERF ?= 0
 
-OPENOCD_INTERFACE ?= stlink   # -or- ftdi/olimex-arm-usb-tiny-h
+OPENOCD_INTERFACE ?= stlink-v2-1   # -or- ftdi/olimex-arm-usb-tiny-h
 OPENOCD_TRANSPORT ?= hla_swd  # -or- jtag
-OPENOCD = openocd -f interface/$(OPENOCD_INTERFACE).cfg -c "transport select $(OPENOCD_TRANSPORT)" -f target/stm32f4x.cfg
+# OPENOCD = openocd -f interface/$(OPENOCD_INTERFACE).cfg -c "transport select $(OPENOCD_TRANSPORT)" -f target/stm32f4x.cfg
+OPENOCD = openocd -f interface/stlink-v2-1.cfg -c "transport select hla_swd" -f target/stm32f4x.cfg
 OPENOCD_T1 = openocd -f interface/$(OPENOCD_INTERFACE).cfg -c "transport select $(OPENOCD_TRANSPORT)" -f target/stm32f2x.cfg
 
 BOARDLOADER_START   = 0x08000000
