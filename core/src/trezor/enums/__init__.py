@@ -126,15 +126,17 @@ if TYPE_CHECKING:
         StellarAddress = 208
         StellarCreateAccountOp = 210
         StellarPaymentOp = 211
-        StellarPathPaymentOp = 212
-        StellarManageOfferOp = 213
-        StellarCreatePassiveOfferOp = 214
+        StellarPathPaymentStrictReceiveOp = 212
+        StellarManageSellOfferOp = 213
+        StellarCreatePassiveSellOfferOp = 214
         StellarSetOptionsOp = 215
         StellarChangeTrustOp = 216
         StellarAllowTrustOp = 217
         StellarAccountMergeOp = 218
         StellarManageDataOp = 220
         StellarBumpSequenceOp = 221
+        StellarManageBuyOfferOp = 222
+        StellarPathPaymentStrictSendOp = 223
         StellarSignedTx = 230
         CardanoSignTx = 303
         CardanoGetPublicKey = 305
@@ -325,6 +327,11 @@ if TYPE_CHECKING:
         TXEXTRADATA = 4
         TXORIGINPUT = 5
         TXORIGOUTPUT = 6
+
+    class CardanoDerivationType(IntEnum):
+        LEDGER = 0
+        ICARUS = 1
+        ICARUS_TREZOR = 2
 
     class CardanoAddressType(IntEnum):
         BASE = 0

@@ -27,8 +27,18 @@
 
 #if MICROPY_PY_TREZORCRYPTO
 
+static mp_obj_t ui_wait_callback = mp_const_none;
+
+static void wrapped_ui_wait_callback(uint32_t current, uint32_t total) {
+  if (mp_obj_is_callable(ui_wait_callback)) {
+    mp_call_function_2_protected(ui_wait_callback, mp_obj_new_int(current),
+                                 mp_obj_new_int(total));
+  }
+}
+
 #include "modtrezorcrypto-aes.h"
 #include "modtrezorcrypto-bip32.h"
+#include "modtrezorcrypto-bip340.h"
 #include "modtrezorcrypto-bip39.h"
 #include "modtrezorcrypto-blake256.h"
 #include "modtrezorcrypto-blake2b.h"
@@ -43,9 +53,6 @@
 #include "modtrezorcrypto-pbkdf2.h"
 #include "modtrezorcrypto-random.h"
 #include "modtrezorcrypto-ripemd160.h"
-#ifdef USE_SECP256K1_ZKP_BIP340
-#include "modtrezorcrypto-bip340.h"
-#endif
 #include "modtrezorcrypto-secp256k1.h"
 #include "modtrezorcrypto-sha1.h"
 #include "modtrezorcrypto-sha256.h"
@@ -55,6 +62,7 @@
 #include "modtrezorcrypto-shamir.h"
 #include "modtrezorcrypto-slip39.h"
 #if !BITCOIN_ONLY
+#include "modtrezorcrypto-cardano.h"
 #include "modtrezorcrypto-monero.h"
 #include "modtrezorcrypto-nem.h"
 #endif
@@ -68,6 +76,10 @@ STATIC const mp_rom_map_elem_t mp_module_trezorcrypto_globals_table[] = {
      MP_ROM_PTR(&mod_trezorcrypto_Blake256_type)},
     {MP_ROM_QSTR(MP_QSTR_blake2b), MP_ROM_PTR(&mod_trezorcrypto_Blake2b_type)},
     {MP_ROM_QSTR(MP_QSTR_blake2s), MP_ROM_PTR(&mod_trezorcrypto_Blake2s_type)},
+#if !BITCOIN_ONLY
+    {MP_ROM_QSTR(MP_QSTR_cardano),
+     MP_ROM_PTR(&mod_trezorcrypto_cardano_module)},
+#endif
     {MP_ROM_QSTR(MP_QSTR_chacha20poly1305),
      MP_ROM_PTR(&mod_trezorcrypto_ChaCha20Poly1305_type)},
     {MP_ROM_QSTR(MP_QSTR_crc), MP_ROM_PTR(&mod_trezorcrypto_crc_module)},
@@ -92,9 +104,7 @@ STATIC const mp_rom_map_elem_t mp_module_trezorcrypto_globals_table[] = {
      MP_ROM_PTR(&mod_trezorcrypto_Ripemd160_type)},
     {MP_ROM_QSTR(MP_QSTR_secp256k1),
      MP_ROM_PTR(&mod_trezorcrypto_secp256k1_module)},
-#ifdef USE_SECP256K1_ZKP_BIP340
     {MP_ROM_QSTR(MP_QSTR_bip340), MP_ROM_PTR(&mod_trezorcrypto_bip340_module)},
-#endif
     {MP_ROM_QSTR(MP_QSTR_sha1), MP_ROM_PTR(&mod_trezorcrypto_Sha1_type)},
     {MP_ROM_QSTR(MP_QSTR_sha256), MP_ROM_PTR(&mod_trezorcrypto_Sha256_type)},
     {MP_ROM_QSTR(MP_QSTR_sha512), MP_ROM_PTR(&mod_trezorcrypto_Sha512_type)},

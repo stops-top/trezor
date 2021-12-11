@@ -48,7 +48,7 @@ ZKP_CFLAGS = \
 	-DENABLE_MODULE_SCHNORRSIG \
 	-DENABLE_MODULE_EXTRAKEYS
 ZKP_PATH = ../vendor/secp256k1-zkp
-CFLAGS += -DSECP256K1_CONTEXT_SIZE=8416
+CFLAGS += -DSECP256K1_CONTEXT_SIZE=208
 
 VALGRIND ?= 1
 
@@ -100,6 +100,7 @@ SRCS  += schnorr.c
 SRCS  += zkp_context.c
 SRCS  += zkp_ecdsa.c
 SRCS  += zkp_bip340.c
+SRCS  += cardano.c
 
 OBJS   = $(SRCS:.c=.o)
 OBJS  += secp256k1-zkp.o
@@ -150,7 +151,7 @@ $(ZKP_PATH)/src/ecmult_static_context.h: $(ZKP_PATH)/src/gen_context.c
 	cd $(ZKP_PATH) && ./gen_context
 
 secp256k1-zkp.o: $(ZKP_PATH)/src/ecmult_static_context.h
-	$(CC) $(ZKP_CFLAGS) -fPIC -I$(ZKP_PATH) -I$(ZKP_PATH)/src -c $(ZKP_PATH)/src/secp256k1.c -o secp256k1-zkp.o
+	$(CC) $(CFLAGS) -Wno-unused-function $(ZKP_CFLAGS) -fPIC -I$(ZKP_PATH) -I$(ZKP_PATH)/src -c $(ZKP_PATH)/src/secp256k1.c -o secp256k1-zkp.o
 
 clean:
 	rm -f *.o aes/*.o chacha20poly1305/*.o ed25519-donna/*.o monero/*.o

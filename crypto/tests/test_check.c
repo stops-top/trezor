@@ -21,6 +21,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <assert.h>
 #include <check.h>
 #include <inttypes.h>
 #include <stdint.h>
@@ -48,6 +49,7 @@
 #include "blake256.h"
 #include "blake2b.h"
 #include "blake2s.h"
+#include "cardano.h"
 #include "chacha_drbg.h"
 #include "curves.h"
 #include "ecdsa.h"
@@ -4823,6 +4825,60 @@ START_TEST(test_blake2b) {
 }
 END_TEST
 
+// Blake2b-256 personalized, a la ZCash
+// Test vectors from https://zips.z.cash/zip-0243
+START_TEST(test_blake2bp) {
+  static const struct {
+    const char *msg;
+    const char *personal;
+    const char *hash;
+  } tests[] = {
+      {
+          "",
+          "ZcashPrevoutHash",
+          "d53a633bbecf82fe9e9484d8a0e727c73bb9e68c96e72dec30144f6a84afa136",
+      },
+      {
+          "",
+          "ZcashSequencHash",
+          "a5f25f01959361ee6eb56a7401210ee268226f6ce764a4f10b7f29e54db37272",
+
+      },
+      {
+          "e7719811893e0000095200ac6551ac636565b2835a0805750200025151",
+          "ZcashOutputsHash",
+          "ab6f7f6c5ad6b56357b5f37e16981723db6c32411753e28c175e15589172194a",
+      },
+      {
+          "0bbe32a598c22adfb48cef72ba5d4287c0cefbacfd8ce195b4963c34a94bba7a1"
+          "75dae4b090f47a068e227433f9e49d3aa09e356d8d66d0c0121e91a3c4aa3f27fa1b"
+          "63396e2b41d",
+          "ZcashPrevoutHash",
+          "cacf0f5210cce5fa65a59f314292b3111d299e7d9d582753cf61e1e408552ae4",
+      }};
+
+  uint8_t digest[32];
+  for (size_t i = 0; i < (sizeof(tests) / sizeof(*tests)); i++) {
+    size_t msg_len = strlen(tests[i].msg) / 2;
+
+    // Test progressive hashing.
+    size_t part_len = msg_len / 2;
+    BLAKE2B_CTX ctx;
+    ck_assert_int_eq(
+        blake2b_InitPersonal(&ctx, sizeof(digest), tests[i].personal,
+                             strlen(tests[i].personal)),
+        0);
+    ck_assert_int_eq(blake2b_Update(&ctx, fromhex(tests[i].msg), part_len), 0);
+    ck_assert_int_eq(blake2b_Update(&ctx, NULL, 0), 0);
+    ck_assert_int_eq(blake2b_Update(&ctx, fromhex(tests[i].msg) + part_len,
+                                    msg_len - part_len),
+                     0);
+    ck_assert_int_eq(blake2b_Final(&ctx, digest, sizeof(digest)), 0);
+    ck_assert_mem_eq(digest, fromhex(tests[i].hash), sizeof(digest));
+  }
+}
+END_TEST
+
 // test vectors from
 // https://raw.githubusercontent.com/BLAKE2/BLAKE2/master/testvectors/blake2s-kat.txt
 START_TEST(test_blake2s) {
@@ -5530,7 +5586,7 @@ START_TEST(test_slip39_word_index) {
                  // 9999 value is never checked since the word is not in list
                  {"fakeword", false, 9999}};
   for (size_t i = 0; i < (sizeof(vectors) / sizeof(*vectors)); i++) {
-    bool result = word_index(&index, vectors[i].word, sizeof(vectors[i].word));
+    bool result = word_index(&index, vectors[i].word, strlen(vectors[i].word));
     ck_assert_int_eq(result, vectors[i].expected_result);
     if (result) {
       ck_assert_uint_eq(index, vectors[i].expected_index);
@@ -9189,7 +9245,50 @@ START_TEST(test_zkp_bip340_sign) {
        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
        "7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9"
-       "CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3"}};
+       "CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3"},
+      // https://github.com/bitcoin/bips/pull/1225/commits/f7af1f73b287c14cf2f63afcb8d199feaf6ab5e1
+      {"2405b971772ad26915c8dcdf10f238753a9b837e5f8e6a86fd7c0cce5b7296d9",
+       "53a1f6e454df1aa2776a2814a721372d6258050de330b3c6d10ee8f4e0dda343",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "7e584883b084ace0469c6962a9a7d2a9060e1f3c218ab40d32c77651482122bc",
+       "aab8fce3c4d7f359577a338676c9580d6946d7d8f899a48a4e1dcc63611e8f654eab719"
+       "2d43e6d6b9c7c95322338edbc5af21e88b43df36a989ba559d473f32a"},
+      {"ea260c3b10e60f6de018455cd0278f2f5b7e454be1999572789e6a9565d26080",
+       "147c9c57132f6e7ecddba9800bb0c4449251c92a1e60371ee77557b6620f3ea3",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "325a644af47e8a5a2591cda0ab0723978537318f10e6a63d4eed783b96a71a4d",
+       "052aedffc554b41f52b521071793a6b88d6dbca9dba94cf34c83696de0c1ec35ca9c5ed"
+       "4ab28059bd606a4f3a657eec0bb96661d42921b5f50a95ad33675b54f"},
+      {"97323385e57015b75b0339a549c56a948eb961555973f0951f555ae6039ef00d",
+       "e4d810fd50586274face62b8a807eb9719cef49c04177cc6b76a9a4251d5450e",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "6ffd256e108685b41831385f57eebf2fca041bc6b5e607ea11b3e03d4cf9d9ba",
+       "f78cf3fe8410326ba95b7119cac657b2d86a461dc0767d7b68cb516f3d8bac64ed027fb"
+       "710b5962d01c42dadaf4dec5731371c6c7850854cc68054eb8f4de80b"},
+      {"a8e7aa924f0d58854185a490e6c41f6efb7b675c0f3331b7f14b549400b4d501",
+       "91b64d5324723a985170e4dc5a0f84c041804f2cd12660fa5dec09fc21783605",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "9f90136737540ccc18707e1fd398ad222a1a7e4dd65cbfd22dbe4660191efa58",
+       "69599256a182e89be95c098b03200b958220ee400c42779cd05cdbf9fa2d5c8060a48c1"
+       "463c9fadf6aea0395b70ebf937fbae0dd2d83185c1d9f675dac8d06f5"},
+      {"241c14f2639d0d7139282aa6abde28dd8a067baa9d633e4e7230287ec2d02901",
+       "75169f4001aa68f15bbed28b218df1d0a62cbbcf1188c6665110c293c907b831",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "835c9ab6084ed9a8ae9b7cda21e0aa797aca3b76a54bd1e3c7db093f6c57e23f",
+       "882a50af428ea47ee84462fcb481033db9c8b1ea6f2b77c9a8e4d8135a1c0771ee8dbcd"
+       "24ea671576ab441bdb2ab3f85f20675ca4c59889bab719b062abfd064"},
+      {"9822270935e156a1b9b28940e7b94a06934a51ddabdd49dd43e8010adc98dfa3",
+       "0f63ca2c7639b9bb4be0465cc0aa3ee78a0761ba5f5f7d6ff8eab340f09da561",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "df1cca638283c667084b8ffe6bf6e116cc5a53cf7ae1202c5fee45a9085f1ba5",
+       "1ec324f9ccc982286a10017daa22ead5087d9f2eff58dd6173d7d608eb959be6be2f3df"
+       "0a25a7890c99a9259c9eab33d71a6c163cabb442aa3a5e5d613611420"},
+      {"8e575b74b70d573b05558883743a72d1ccc326b4c299ea3412a29d3b83e801e4",
+       "053690babeabbb7850c32eead0acf8df990ced79f7a31e358fabf2658b4bc587",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       "30319859ca79ea1b7a9782e9daebc46e4ca4ca2bc04c9c53b2ec87fa83a526bd",
+       "7e6c212ebe04e8241bee0151b0d3230aa22dec9dbdd8197ebd3ff616b9e4b47dccee08a"
+       "32a52a77d60587a77e7d7b5d1d113235d38921740ffdbe795459637ff"}};
 
   int res = 0;
   uint8_t priv_key[32] = {0};
@@ -9280,7 +9379,43 @@ START_TEST(test_zkp_bip340_verify) {
        "243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89",
        "6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E17776969E89B4"
        "C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B",
-       1}
+       1},
+      // https://github.com/bitcoin/bips/pull/1225/commits/f7af1f73b287c14cf2f63afcb8d199feaf6ab5e1
+      {"53a1f6e454df1aa2776a2814a721372d6258050de330b3c6d10ee8f4e0dda343",
+       "7e584883b084ace0469c6962a9a7d2a9060e1f3c218ab40d32c77651482122bc",
+       "aab8fce3c4d7f359577a338676c9580d6946d7d8f899a48a4e1dcc63611e8f654eab719"
+       "2d43e6d6b9c7c95322338edbc5af21e88b43df36a989ba559d473f32a",
+       0},
+      {"147c9c57132f6e7ecddba9800bb0c4449251c92a1e60371ee77557b6620f3ea3",
+       "325a644af47e8a5a2591cda0ab0723978537318f10e6a63d4eed783b96a71a4d",
+       "052aedffc554b41f52b521071793a6b88d6dbca9dba94cf34c83696de0c1ec35ca9c5ed"
+       "4ab28059bd606a4f3a657eec0bb96661d42921b5f50a95ad33675b54f",
+       0},
+      {"e4d810fd50586274face62b8a807eb9719cef49c04177cc6b76a9a4251d5450e",
+       "6ffd256e108685b41831385f57eebf2fca041bc6b5e607ea11b3e03d4cf9d9ba",
+       "f78cf3fe8410326ba95b7119cac657b2d86a461dc0767d7b68cb516f3d8bac64ed027fb"
+       "710b5962d01c42dadaf4dec5731371c6c7850854cc68054eb8f4de80b",
+       0},
+      {"91b64d5324723a985170e4dc5a0f84c041804f2cd12660fa5dec09fc21783605",
+       "9f90136737540ccc18707e1fd398ad222a1a7e4dd65cbfd22dbe4660191efa58",
+       "69599256a182e89be95c098b03200b958220ee400c42779cd05cdbf9fa2d5c8060a48c1"
+       "463c9fadf6aea0395b70ebf937fbae0dd2d83185c1d9f675dac8d06f5",
+       0},
+      {"75169f4001aa68f15bbed28b218df1d0a62cbbcf1188c6665110c293c907b831",
+       "835c9ab6084ed9a8ae9b7cda21e0aa797aca3b76a54bd1e3c7db093f6c57e23f",
+       "882a50af428ea47ee84462fcb481033db9c8b1ea6f2b77c9a8e4d8135a1c0771ee8dbcd"
+       "24ea671576ab441bdb2ab3f85f20675ca4c59889bab719b062abfd064",
+       0},
+      {"0f63ca2c7639b9bb4be0465cc0aa3ee78a0761ba5f5f7d6ff8eab340f09da561",
+       "df1cca638283c667084b8ffe6bf6e116cc5a53cf7ae1202c5fee45a9085f1ba5",
+       "1ec324f9ccc982286a10017daa22ead5087d9f2eff58dd6173d7d608eb959be6be2f3df"
+       "0a25a7890c99a9259c9eab33d71a6c163cabb442aa3a5e5d613611420",
+       0},
+      {"053690babeabbb7850c32eead0acf8df990ced79f7a31e358fabf2658b4bc587",
+       "30319859ca79ea1b7a9782e9daebc46e4ca4ca2bc04c9c53b2ec87fa83a526bd",
+       "7e6c212ebe04e8241bee0151b0d3230aa22dec9dbdd8197ebd3ff616b9e4b47dccee08a"
+       "32a52a77d60587a77e7d7b5d1d113235d38921740ffdbe795459637ff",
+       0},
 
   };
 
@@ -9296,6 +9431,106 @@ START_TEST(test_zkp_bip340_verify) {
 
     res = zkp_bip340_verify_digest(pub_key, sig, digest);
     ck_assert_int_eq(res, tests[i].res);
+  }
+}
+END_TEST
+
+START_TEST(test_zkp_bip340_tweak) {
+  static struct {
+    const char *root_hash;
+    const char *internal_priv;
+    const char *output_priv;
+    const char *internal_pub;
+    const char *output_pub;
+  } tests[] = {
+      // https://github.com/bitcoin/bips/blob/master/bip-0086/
+      {NULL, "41f41d69260df4cf277826a9b65a3717e4eeddbeedf637f212ca096576479361",
+       "eaac016f36e8c18347fbacf05ab7966708fbfce7ce3bf1dc32a09dd0645db038",
+       "cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115",
+       "a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c"},
+      {NULL, "86c68ac0ed7df88cbdd08a847c6d639f87d1234d40503abf3ac178ef7ddc05dd",
+       "0b6f18573f75c454efb43d2bfc7c91f7f88cb802c45a7821e820402fcf2836d3",
+       "83dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b313145",
+       "a82f29944d65b86ae6b5e5cc75e294ead6c59391a1edc5e016e3498c67fc7bbb"},
+      {NULL, "6ccbca4a02ac648702dde463d9c1b0d328a4df1e068ef9dc2bc788b33a4f0412",
+       "c3074682f4c54d9801da58a52aaf0e28c089d5f8c6847dc8829734bbe3f60647",
+       "399f1b2f4393f29a18c937859c5dd8a77350103157eb880f02e8c08214277cef",
+       "882d74e5d0572d5a816cef0041a96b6c1de832f6f9676d9605c44d5e9a97d3dc"},
+      // https://github.com/bitcoin-core/btcdeb/blob/master/doc/tapscript-example-with-tap.md
+      {"41646f8c1fe2a96ddad7f5471bc4fee7da98794ef8c45a4f4fc6a559d60c9f6b",
+       "1229101a0fcf2104e8808dab35661134aa5903867d44deb73ce1c7e4eb925be8",
+       "4fe6b3e5fbd61870577980ad5e4e13080776069f0fb3c1e353572e0c4993abc1",
+       "f30544d6009c8d8d94f5d030b2e844b1a3ca036255161c479db1cca5b374dd1c",
+       "a5ba0871796eb49fb4caa6bf78e675b9455e2d66e751676420f8381d5dda8951"},
+      // https://github.com/bitcoin/bips/pull/1225/commits/f7af1f73b287c14cf2f63afcb8d199feaf6ab5e1
+      {NULL, "6b973d88838f27366ed61c9ad6367663045cb456e28335c109e30717ae0c6baa",
+       "2405b971772ad26915c8dcdf10f238753a9b837e5f8e6a86fd7c0cce5b7296d9",
+       "d6889cb081036e0faefa3a35157ad71086b123b2b144b649798b494c300a961d",
+       "53a1f6e454df1aa2776a2814a721372d6258050de330b3c6d10ee8f4e0dda343"},
+      {"5b75adecf53548f3ec6ad7d78383bf84cc57b55a3127c72b9a2481752dd88b21",
+       "1e4da49f6aaf4e5cd175fe08a32bb5cb4863d963921255f33d3bc31e1343907f",
+       "ea260c3b10e60f6de018455cd0278f2f5b7e454be1999572789e6a9565d26080",
+       "187791b6f712a8ea41c8ecdd0ee77fab3e85263b37e1ec18a3651926b3a6cf27",
+       "147c9c57132f6e7ecddba9800bb0c4449251c92a1e60371ee77557b6620f3ea3"},
+      {"c525714a7f49c28aedbbba78c005931a81c234b2f6c99a73e4d06082adc8bf2b",
+       "d3c7af07da2d54f7a7735d3d0fc4f0a73164db638b2f2f7c43f711f6d4aa7e64",
+       "97323385e57015b75b0339a549c56a948eb961555973f0951f555ae6039ef00d",
+       "93478e9488f956df2396be2ce6c5cced75f900dfa18e7dabd2428aae78451820",
+       "e4d810fd50586274face62b8a807eb9719cef49c04177cc6b76a9a4251d5450e"},
+      {"ccbd66c6f7e8fdab47b3a486f59d28262be857f30d4773f2d5ea47f7761ce0e2",
+       "f36bb07a11e469ce941d16b63b11b9b9120a84d9d87cff2c84a8d4affb438f4e",
+       "a8e7aa924f0d58854185a490e6c41f6efb7b675c0f3331b7f14b549400b4d501",
+       "e0dfe2300b0dd746a3f8674dfd4525623639042569d829c7f0eed9602d263e6f",
+       "91b64d5324723a985170e4dc5a0f84c041804f2cd12660fa5dec09fc21783605"},
+      {"2f6b2c5397b6d68ca18e09a3f05161668ffe93a988582d55c6f07bd5b3329def",
+       "415cfe9c15d9cea27d8104d5517c06e9de48e2f986b695e4f5ffebf230e725d8",
+       "241c14f2639d0d7139282aa6abde28dd8a067baa9d633e4e7230287ec2d02901",
+       "55adf4e8967fbd2e29f20ac896e60c3b0f1d5b0efa9d34941b5958c7b0a0312d",
+       "75169f4001aa68f15bbed28b218df1d0a62cbbcf1188c6665110c293c907b831"},
+      {"f3004d6c183e038105d436db1424f321613366cbb7b05939bf05d763a9ebb962",
+       "c7b0e81f0a9a0b0499e112279d718cca98e79a12e2f137c72ae5b213aad0d103",
+       "9822270935e156a1b9b28940e7b94a06934a51ddabdd49dd43e8010adc98dfa3",
+       "ee4fe085983462a184015d1f782d6a5f8b9c2b60130aff050ce221ecf3786592",
+       "0f63ca2c7639b9bb4be0465cc0aa3ee78a0761ba5f5f7d6ff8eab340f09da561"},
+      {"d9c2c32808b41c0301d876d49c0af72e1d98e84b99ca9b4bb67fea1a7424b755",
+       "77863416be0d0665e517e1c375fd6f75839544eca553675ef7fdf4949518ebaa",
+       "8e575b74b70d573b05558883743a72d1ccc326b4c299ea3412a29d3b83e801e4",
+       "f9f400803e683727b14f463836e1e78e1c64417638aa066919291a225f0e8dd8",
+       "053690babeabbb7850c32eead0acf8df990ced79f7a31e358fabf2658b4bc587"},
+  };
+
+  int res = 0;
+  uint8_t internal_priv[32] = {0};
+  uint8_t output_priv[32] = {0};
+  uint8_t internal_pub[32] = {0};
+  uint8_t output_pub[32] = {0};
+  uint8_t result[32] = {0};
+
+  for (size_t i = 0; i < sizeof(tests) / sizeof(*tests); i++) {
+    memcpy(internal_priv, fromhex(tests[i].internal_priv), 32);
+    memcpy(output_priv, fromhex(tests[i].output_priv), 32);
+    memcpy(internal_pub, fromhex(tests[i].internal_pub), 32);
+    memcpy(output_pub, fromhex(tests[i].output_pub), 32);
+    const uint8_t *root_hash = NULL;
+    if (tests[i].root_hash != NULL) {
+      root_hash = fromhex(tests[i].root_hash);
+    }
+
+    res = zkp_bip340_get_public_key(internal_priv, result);
+    ck_assert_int_eq(res, 0);
+    ck_assert_mem_eq(internal_pub, result, 32);
+
+    res = zkp_bip340_get_public_key(output_priv, result);
+    ck_assert_int_eq(res, 0);
+    ck_assert_mem_eq(output_pub, result, 32);
+
+    res = zkp_bip340_tweak_private_key(internal_priv, root_hash, result);
+    ck_assert_int_eq(res, 0);
+    ck_assert_mem_eq(output_priv, result, 32);
+
+    res = zkp_bip340_tweak_public_key(internal_pub, root_hash, result);
+    ck_assert_int_eq(res, 0);
+    ck_assert_mem_eq(output_pub, result, 32);
   }
 }
 END_TEST
@@ -9469,6 +9704,7 @@ Suite *test_suite(void) {
 
   tc = tcase_create("blake2");
   tcase_add_test(tc, test_blake2b);
+  tcase_add_test(tc, test_blake2bp);
   tcase_add_test(tc, test_blake2s);
   suite_add_tcase(s, tc);
 
@@ -9615,6 +9851,7 @@ Suite *test_suite(void) {
   tc = tcase_create("zkp_bip340");
   tcase_add_test(tc, test_zkp_bip340_sign);
   tcase_add_test(tc, test_zkp_bip340_verify);
+  tcase_add_test(tc, test_zkp_bip340_tweak);
   suite_add_tcase(s, tc);
 
 #if USE_CARDANO
@@ -9629,6 +9866,10 @@ Suite *test_suite(void) {
   tcase_add_test(tc, test_bip32_cardano_hdnode_vector_7);
   tcase_add_test(tc, test_bip32_cardano_hdnode_vector_8);
   tcase_add_test(tc, test_bip32_cardano_hdnode_vector_9);
+
+  tcase_add_test(tc, test_cardano_ledger_vector_1);
+  tcase_add_test(tc, test_cardano_ledger_vector_2);
+  tcase_add_test(tc, test_cardano_ledger_vector_3);
 
   tcase_add_test(tc, test_ed25519_cardano_sign_vectors);
   suite_add_tcase(s, tc);
@@ -9680,7 +9921,7 @@ Suite *test_suite(void) {
 
 // run suite
 int main(void) {
-  zkp_context_init();
+  assert(zkp_context_init() == 0);
   int number_failed;
   Suite *s = test_suite();
   SRunner *sr = srunner_create(s);

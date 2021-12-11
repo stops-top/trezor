@@ -25,7 +25,6 @@ from ...components.tt.scroll import (
     AskPaginated,
     Paginated,
     paginate_paragraphs,
-    paginate_text,
 )
 from ...components.tt.text import LINE_WIDTH_PAGINATED, Span, Text
 from ...constants.tt import (
@@ -983,32 +982,25 @@ async def confirm_sign_identity(
 
 
 async def confirm_signverify(
-    ctx: wire.GenericContext, coin: str, message: str, address: str | None = None
+    ctx: wire.GenericContext, coin: str, message: str, address: str, verify: bool
 ) -> None:
-    if address:
+    if verify:
         header = f"Verify {coin} message"
-        font = ui.MONO
         br_type = "verify_message"
-
-        text = Text(header, new_lines=False)
-        text.bold("Confirm address:\n")
-        text.mono(*chunks_intersperse(address, MONO_ADDR_PER_LINE))
-        await raise_if_cancelled(
-            interact(ctx, Confirm(text), br_type, ButtonRequestType.Other)
-        )
     else:
         header = f"Sign {coin} message"
-        font = ui.NORMAL
         br_type = "sign_message"
 
+    text = Text(header, new_lines=False)
+    text.bold("Confirm address:\n")
+    text.mono(*chunks_intersperse(address, MONO_ADDR_PER_LINE))
     await raise_if_cancelled(
-        interact(
-            ctx,
-            paginate_text(message, header, font=font),
-            br_type,
-            ButtonRequestType.Other,
-        )
+        interact(ctx, Confirm(text), br_type, ButtonRequestType.Other)
     )
+
+    para = [(ui.BOLD, "Confirm message:"), (ui.MONO, message)]
+    content = paginate_paragraphs(para, header)
+    await raise_if_cancelled(interact(ctx, content, br_type, ButtonRequestType.Other))
 
 
 async def show_popup(

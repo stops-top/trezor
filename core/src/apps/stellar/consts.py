@@ -12,10 +12,12 @@ if False:
         StellarBumpSequenceOp,
         StellarChangeTrustOp,
         StellarCreateAccountOp,
-        StellarCreatePassiveOfferOp,
+        StellarCreatePassiveSellOfferOp,
         StellarManageDataOp,
-        StellarManageOfferOp,
-        StellarPathPaymentOp,
+        StellarManageBuyOfferOp,
+        StellarManageSellOfferOp,
+        StellarPathPaymentStrictReceiveOp,
+        StellarPathPaymentStrictSendOp,
         StellarPaymentOp,
         StellarSetOptionsOp,
     )
@@ -26,10 +28,12 @@ if False:
         StellarBumpSequenceOp,
         StellarChangeTrustOp,
         StellarCreateAccountOp,
-        StellarCreatePassiveOfferOp,
+        StellarCreatePassiveSellOfferOp,
         StellarManageDataOp,
-        StellarManageOfferOp,
-        StellarPathPaymentOp,
+        StellarManageBuyOfferOp,
+        StellarManageSellOfferOp,
+        StellarPathPaymentStrictReceiveOp,
+        StellarPathPaymentStrictSendOp,
         StellarPaymentOp,
         StellarSetOptionsOp,
     ]
@@ -37,7 +41,7 @@ if False:
 
 TX_TYPE = b"\x00\x00\x00\x02"
 
-# source: https://github.com/stellar/go/blob/3d2c1defe73dbfed00146ebe0e8d7e07ce4bb1b6/xdr/Stellar-transaction.x#L16
+# source: https://github.com/stellar/go/blob/a1db2a6b1f/xdr/Stellar-transaction.x#L35
 # Inflation not supported see https://github.com/trezor/trezor-core/issues/202#issuecomment-393342089
 op_codes: dict[int, int] = {
     MessageType.StellarAccountMergeOp: 8,
@@ -45,10 +49,12 @@ op_codes: dict[int, int] = {
     MessageType.StellarBumpSequenceOp: 11,
     MessageType.StellarChangeTrustOp: 6,
     MessageType.StellarCreateAccountOp: 0,
-    MessageType.StellarCreatePassiveOfferOp: 4,
+    MessageType.StellarCreatePassiveSellOfferOp: 4,
     MessageType.StellarManageDataOp: 10,
-    MessageType.StellarManageOfferOp: 3,
-    MessageType.StellarPathPaymentOp: 2,
+    MessageType.StellarManageBuyOfferOp: 12,
+    MessageType.StellarManageSellOfferOp: 3,
+    MessageType.StellarPathPaymentStrictReceiveOp: 2,
+    MessageType.StellarPathPaymentStrictSendOp: 13,
     MessageType.StellarPaymentOp: 1,
     MessageType.StellarSetOptionsOp: 5,
 }
@@ -59,10 +65,12 @@ op_wire_types = [
     MessageType.StellarBumpSequenceOp,
     MessageType.StellarChangeTrustOp,
     MessageType.StellarCreateAccountOp,
-    MessageType.StellarCreatePassiveOfferOp,
+    MessageType.StellarCreatePassiveSellOfferOp,
     MessageType.StellarManageDataOp,
-    MessageType.StellarManageOfferOp,
-    MessageType.StellarPathPaymentOp,
+    MessageType.StellarManageBuyOfferOp,
+    MessageType.StellarManageSellOfferOp,
+    MessageType.StellarPathPaymentStrictReceiveOp,
+    MessageType.StellarPathPaymentStrictSendOp,
     MessageType.StellarPaymentOp,
     MessageType.StellarSetOptionsOp,
 ]

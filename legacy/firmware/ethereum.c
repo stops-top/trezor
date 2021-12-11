@@ -36,6 +36,9 @@
 #include "sha3.h"
 #include "transaction.h"
 #include "util.h"
+#ifdef USE_SECP256K1_ZKP_ECDSA
+#include "zkp_ecdsa.h"
+#endif
 
 /* Maximum chain_id which returns the full signature_v (which must fit into an
 uint32). chain_ids larger than this will only return one bit and the caller must
@@ -905,16 +908,6 @@ static void ethereum_message_hash(const uint8_t *message, size_t message_len,
 
 void ethereum_message_sign(const EthereumSignMessage *msg, const HDNode *node,
                            EthereumMessageSignature *resp) {
-  uint8_t pubkeyhash[20] = {0};
-  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-    return;
-  }
-
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
-  // ethereum_address_checksum adds trailing zero
-
   uint8_t hash[32] = {0};
   ethereum_message_hash(msg->message.bytes, msg->message.size, hash);
 
@@ -954,8 +947,20 @@ int ethereum_message_verify(const EthereumVerifyMessage *msg) {
   if (v >= 27) {
     v -= 27;
   }
-  if (v >= 2 || ecdsa_recover_pub_from_sig(
-                    &secp256k1, pubkey, msg->signature.bytes, hash, v) != 0) {
+
+  if (v >= 2) {
+    return 2;
+  }
+
+  int ret = 0;
+#ifdef USE_SECP256K1_ZKP_ECDSA
+  ret = zkp_ecdsa_recover_pub_from_sig(&secp256k1, pubkey, msg->signature.bytes,
+                                       hash, v);
+#else
+  ret = ecdsa_recover_pub_from_sig(&secp256k1, pubkey, msg->signature.bytes,
+                                   hash, v);
+#endif
+  if (ret != 0) {
     return 2;
   }
 

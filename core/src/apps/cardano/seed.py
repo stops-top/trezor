@@ -1,18 +1,33 @@
 from storage import cache, device
 from trezor import wire
-from trezor.crypto import bip32
+from trezor.crypto import bip32, cardano
+from trezor.enums import CardanoDerivationType
 
 from apps.common import mnemonic
-from apps.common.passphrase import get as get_passphrase
-from apps.common.seed import get_seed
+from apps.common.seed import derive_and_store_roots, get_seed
 
 from .helpers import paths
 
 if False:
-    from typing import Callable, Awaitable
+    from typing import Callable, Awaitable, TypeVar, Union
 
     from apps.common.paths import Bip32Path
-    from apps.common.keychain import MsgIn, MsgOut, Handler
+    from apps.common.keychain import MsgOut, Handler
+
+    from trezor.messages import (
+        CardanoGetAddress,
+        CardanoGetPublicKey,
+        CardanoGetNativeScriptHash,
+        CardanoSignTxInit,
+    )
+
+    CardanoMessages = Union[
+        CardanoGetAddress,
+        CardanoGetPublicKey,
+        CardanoGetNativeScriptHash,
+        CardanoSignTxInit,
+    ]
+    MsgIn = TypeVar("MsgIn", bound=CardanoMessages)
 
     HandlerWithKeychain = Callable[[wire.Context, MsgIn, "Keychain"], Awaitable[MsgOut]]
 
@@ -24,11 +39,18 @@ class Keychain:
     """
 
     def __init__(self, root: bip32.HDNode) -> None:
-        self.byron_root = derive_path_cardano(root, paths.BYRON_ROOT)
-        self.shelley_root = derive_path_cardano(root, paths.SHELLEY_ROOT)
-        self.multisig_root = derive_path_cardano(root, paths.MULTISIG_ROOT)
-        self.minting_root = derive_path_cardano(root, paths.MINTING_ROOT)
+        self.byron_root = self._derive_path(root, paths.BYRON_ROOT)
+        self.shelley_root = self._derive_path(root, paths.SHELLEY_ROOT)
+        self.multisig_root = self._derive_path(root, paths.MULTISIG_ROOT)
+        self.minting_root = self._derive_path(root, paths.MINTING_ROOT)
         root.__del__()
+
+    @staticmethod
+    def _derive_path(root: bip32.HDNode, path: Bip32Path) -> bip32.HDNode:
+        """Clone and derive path from the root."""
+        node = root.clone()
+        node.derive_path(path)
+        return node
 
     def verify_path(self, path: Bip32Path) -> None:
         if not self.is_in_keychain(path):
@@ -67,7 +89,7 @@ class Keychain:
         suffix = node_path[len(paths.SHELLEY_ROOT) :]
 
         # derive child node from the root
-        return derive_path_cardano(path_root, suffix)
+        return self._derive_path(path_root, suffix)
 
     # XXX the root node remains in session cache so we should not delete it
     # def __del__(self) -> None:
@@ -90,43 +112,78 @@ def is_minting_path(path: Bip32Path) -> bool:
     return path[: len(paths.MINTING_ROOT)] == paths.MINTING_ROOT
 
 
-def derive_path_cardano(root: bip32.HDNode, path: Bip32Path) -> bip32.HDNode:
-    node = root.clone()
-    for i in path:
-        node.derive_cardano(i)
-    return node
+def derive_and_store_secrets(passphrase: str) -> None:
+    assert device.is_initialized()
+    assert cache.get(cache.APP_COMMON_DERIVE_CARDANO)
+
+    if not mnemonic.is_bip39():
+        # nothing to do for SLIP-39, where we can derive the root from the main seed
+        return
+
+    icarus_secret = mnemonic.derive_cardano_icarus(passphrase, trezor_derivation=False)
+
+    words = mnemonic.get_secret()
+    assert words is not None, "Mnemonic is not set"
+    # count ASCII spaces, add 1 to get number of words
+    words_count = sum(c == 0x20 for c in words) + 1
+
+    if words_count == 24:
+        icarus_trezor_secret = mnemonic.derive_cardano_icarus(
+            passphrase, trezor_derivation=True
+        )
+    else:
+        icarus_trezor_secret = icarus_secret
+
+    cache.set(cache.APP_CARDANO_ICARUS_SECRET, icarus_secret)
+    cache.set(cache.APP_CARDANO_ICARUS_TREZOR_SECRET, icarus_trezor_secret)
 
 
-@cache.stored_async(cache.APP_CARDANO_PASSPHRASE)
-async def _get_passphrase(ctx: wire.Context) -> bytes:
-    return (await get_passphrase(ctx)).encode()
+async def _get_secret(ctx: wire.Context, cache_entry: int) -> bytes:
+    secret = cache.get(cache_entry)
+    if secret is None:
+        await derive_and_store_roots(ctx)
+        secret = cache.get(cache_entry)
+        assert secret is not None
+    return secret
 
 
-async def _get_keychain_bip39(ctx: wire.Context) -> Keychain:
+async def _get_keychain_bip39(
+    ctx: wire.Context, derivation_type: CardanoDerivationType
+) -> Keychain:
     if not device.is_initialized():
         raise wire.NotInitialized("Device is not initialized")
 
-    # ask for passphrase, loading from cache if necessary
-    passphrase = await _get_passphrase(ctx)
-    # derive the root node from mnemonic and passphrase via Cardano Icarus algorithm
-    secret_bytes = mnemonic.get_secret()
-    assert secret_bytes is not None
-    root = bip32.from_mnemonic_cardano(secret_bytes.decode(), passphrase.decode())
+    if derivation_type == CardanoDerivationType.LEDGER:
+        seed = await get_seed(ctx)
+        return Keychain(cardano.from_seed_ledger(seed))
+
+    if not cache.get(cache.APP_COMMON_DERIVE_CARDANO):
+        raise wire.ProcessError("Cardano derivation is not enabled for this session")
+
+    if derivation_type == CardanoDerivationType.ICARUS:
+        cache_entry = cache.APP_CARDANO_ICARUS_SECRET
+    else:
+        cache_entry = cache.APP_CARDANO_ICARUS_TREZOR_SECRET
+
+    secret = await _get_secret(ctx, cache_entry)
+    root = cardano.from_secret(secret)
     return Keychain(root)
 
 
-async def get_keychain(ctx: wire.Context) -> Keychain:
+async def get_keychain(
+    ctx: wire.Context, derivation_type: CardanoDerivationType
+) -> Keychain:
     if mnemonic.is_bip39():
-        return await _get_keychain_bip39(ctx)
+        return await _get_keychain_bip39(ctx, derivation_type)
     else:
         # derive the root node via SLIP-0023 https://github.com/satoshilabs/slips/blob/master/slip-0022.md
         seed = await get_seed(ctx)
-        return Keychain(bip32.from_seed(seed, "ed25519 cardano seed"))
+        return Keychain(cardano.from_seed_slip23(seed))
 
 
 def with_keychain(func: HandlerWithKeychain[MsgIn, MsgOut]) -> Handler[MsgIn, MsgOut]:
     async def wrapper(ctx: wire.Context, msg: MsgIn) -> MsgOut:
-        keychain = await get_keychain(ctx)
+        keychain = await get_keychain(ctx, msg.derivation_type)
         return await func(ctx, msg, keychain)
 
     return wrapper

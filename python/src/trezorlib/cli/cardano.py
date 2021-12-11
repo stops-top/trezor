@@ -1,6 +1,6 @@
 # This file is part of the Trezor project.
 #
-# Copyright (C) 2012-2019 SatoshiLabs and contributors
+# Copyright (C) 2012-2022 SatoshiLabs and contributors
 #
 # This library is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License version 3
@@ -15,17 +15,21 @@
 # If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
 
 import json
+from typing import TYPE_CHECKING, Optional, TextIO
 
 import click
 
 from .. import cardano, messages, tools
 from . import ChoiceType, with_client
 
+if TYPE_CHECKING:
+    from ..client import TrezorClient
+
 PATH_HELP = "BIP-32 path to key, e.g. m/44'/1815'/0'/0/0"
 
 
 @click.group(name="cardano")
-def cli():
+def cli() -> None:
     """Cardano commands."""
 
 
@@ -43,8 +47,22 @@ def cli():
 )
 @click.option("-N", "--network-id", type=int, default=cardano.NETWORK_IDS["mainnet"])
 @click.option("-t", "--testnet", is_flag=True)
+@click.option(
+    "-D",
+    "--derivation-type",
+    type=ChoiceType({m.name: m for m in messages.CardanoDerivationType}),
+    default=messages.CardanoDerivationType.ICARUS,
+)
 @with_client
-def sign_tx(client, file, signing_mode, protocol_magic, network_id, testnet):
+def sign_tx(
+    client: "TrezorClient",
+    file: TextIO,
+    signing_mode: messages.CardanoTxSigningMode,
+    protocol_magic: int,
+    network_id: int,
+    testnet: bool,
+    derivation_type: messages.CardanoDerivationType,
+) -> cardano.SignTxResponse:
     """Sign Cardano transaction."""
     transaction = json.load(file)
 
@@ -72,6 +90,7 @@ def sign_tx(client, file, signing_mode, protocol_magic, network_id, testnet):
         for p in transaction["additional_witness_requests"]
     ]
 
+    client.init_device(derive_cardano=True)
     sign_tx_response = cardano.sign_tx(
         client,
         signing_mode,
@@ -87,6 +106,7 @@ def sign_tx(client, file, signing_mode, protocol_magic, network_id, testnet):
         auxiliary_data,
         mint,
         additional_witness_requests,
+        derivation_type=derivation_type,
     )
 
     sign_tx_response["tx_hash"] = sign_tx_response["tx_hash"].hex()
@@ -114,7 +134,7 @@ def sign_tx(client, file, signing_mode, protocol_magic, network_id, testnet):
 
 
 @cli.command()
-@click.option("-n", "--address", type=str, default=None, help=PATH_HELP)
+@click.option("-n", "--address", type=str, default="", help=PATH_HELP)
 @click.option("-d", "--show-display", is_flag=True)
 @click.option(
     "-t",
@@ -122,7 +142,7 @@ def sign_tx(client, file, signing_mode, protocol_magic, network_id, testnet):
     type=ChoiceType({m.name: m for m in messages.CardanoAddressType}),
     default="BASE",
 )
-@click.option("-s", "--staking-address", type=str, default=None)
+@click.option("-s", "--staking-address", type=str, default="")
 @click.option("-h", "--staking-key-hash", type=str, default=None)
 @click.option("-b", "--block_index", type=int, default=None)
 @click.option("-x", "--tx_index", type=int, default=None)
@@ -134,23 +154,30 @@ def sign_tx(client, file, signing_mode, protocol_magic, network_id, testnet):
 )
 @click.option("-N", "--network-id", type=int, default=cardano.NETWORK_IDS["mainnet"])
 @click.option("-e", "--testnet", is_flag=True)
+@click.option(
+    "-D",
+    "--derivation-type",
+    type=ChoiceType({m.name: m for m in messages.CardanoDerivationType}),
+    default=messages.CardanoDerivationType.ICARUS,
+)
 @with_client
 def get_address(
-    client,
-    address,
-    address_type,
-    staking_address,
-    staking_key_hash,
-    block_index,
-    tx_index,
-    certificate_index,
-    script_payment_hash,
-    script_staking_hash,
-    protocol_magic,
-    network_id,
-    show_display,
-    testnet,
-):
+    client: "TrezorClient",
+    address: str,
+    address_type: messages.CardanoAddressType,
+    staking_address: str,
+    staking_key_hash: Optional[str],
+    block_index: Optional[int],
+    tx_index: Optional[int],
+    certificate_index: Optional[int],
+    script_payment_hash: Optional[str],
+    script_staking_hash: Optional[str],
+    protocol_magic: int,
+    network_id: int,
+    show_display: bool,
+    testnet: bool,
+    derivation_type: messages.CardanoDerivationType,
+) -> str:
     """
     Get Cardano address.
 
@@ -185,18 +212,35 @@ def get_address(
         script_staking_hash_bytes,
     )
 
+    client.init_device(derive_cardano=True)
     return cardano.get_address(
-        client, address_parameters, protocol_magic, network_id, show_display
+        client,
+        address_parameters,
+        protocol_magic,
+        network_id,
+        show_display,
+        derivation_type=derivation_type,
     )
 
 
 @cli.command()
 @click.option("-n", "--address", required=True, help=PATH_HELP)
+@click.option(
+    "-D",
+    "--derivation-type",
+    type=ChoiceType({m.name: m for m in messages.CardanoDerivationType}),
+    default=messages.CardanoDerivationType.ICARUS,
+)
 @with_client
-def get_public_key(client, address):
+def get_public_key(
+    client: "TrezorClient",
+    address: str,
+    derivation_type: messages.CardanoDerivationType,
+) -> messages.CardanoPublicKey:
     """Get Cardano public key."""
     address_n = tools.parse_path(address)
-    return cardano.get_public_key(client, address_n)
+    client.init_device(derive_cardano=True)
+    return cardano.get_public_key(client, address_n, derivation_type=derivation_type)
 
 
 @cli.command()
@@ -207,10 +251,24 @@ def get_public_key(client, address):
     type=ChoiceType({m.name: m for m in messages.CardanoNativeScriptHashDisplayFormat}),
     default="HIDE",
 )
+@click.option(
+    "-D",
+    "--derivation-type",
+    type=ChoiceType({m.name: m for m in messages.CardanoDerivationType}),
+    default=messages.CardanoDerivationType.ICARUS,
+)
 @with_client
-def get_native_script_hash(client, file, display_format):
+def get_native_script_hash(
+    client: "TrezorClient",
+    file: TextIO,
+    display_format: messages.CardanoNativeScriptHashDisplayFormat,
+    derivation_type: messages.CardanoDerivationType,
+) -> messages.CardanoNativeScriptHash:
     """Get Cardano native script hash."""
     native_script_json = json.load(file)
     native_script = cardano.parse_native_script(native_script_json)
 
-    return cardano.get_native_script_hash(client, native_script, display_format)
+    client.init_device(derive_cardano=True)
+    return cardano.get_native_script_hash(
+        client, native_script, display_format, derivation_type=derivation_type
+    )
