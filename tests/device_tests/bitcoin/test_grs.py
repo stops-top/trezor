@@ -1,6 +1,6 @@
 # This file is part of the Trezor project.
 #
-# Copyright (C) 2012-2019 SatoshiLabs and contributors
+# Copyright (C) 2012-2021 SatoshiLabs and contributors
 #
 # This library is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License version 3
@@ -33,6 +33,9 @@ TXHASH_09a48b = bytes.fromhex(
 )
 TXHASH_4f2f85 = bytes.fromhex(
     "4f2f857f39ed1afe05542d058fb0be865a387446e32fc876d086203f483f61d1"
+)
+TXHASH_45aeb9 = bytes.fromhex(
+    "45aeb9af884b4082104b0212c5f40ffca8f0127e627a05810b69f0bad777678c"
 )
 
 pytestmark = pytest.mark.altcoin
@@ -213,4 +216,29 @@ def test_send_segwit_native_change(client):
     assert (
         serialized_tx.hex()
         == "01000000000101d1613f483f2086d076c82fe34674385a86beb08f052d5405fe1aed397f852f4f0000000000feffffff02404b4c000000000017a9147a55d61848e77ca266e79a39bfc85c580a6426c987a8386f0000000000160014cc8067093f6f843d6d3e22004a4290cd0c0f336b02483045022100ea8780bc1e60e14e945a80654a41748bbf1aa7d6f2e40a88d91dfc2de1f34bd10220181a474a3420444bd188501d8d270736e1e9fe379da9970de992ff445b0972e3012103adc58245cf28406af0ef5cc24b8afba7f1be6c72f279b642d85c48798685f862d9ed0900"
+    )
+
+
+def test_send_p2tr(client):
+    inp1 = messages.TxInputType(
+        # tgrs1paxhjl357yzctuf3fe58fcdx6nul026hhh6kyldpfsf3tckj9a3wsvuqrgn
+        address_n=parse_path("86'/1'/1'/0/0"),
+        amount=4450,
+        prev_hash=TXHASH_45aeb9,
+        prev_index=0,
+        script_type=messages.InputScriptType.SPENDTAPROOT,
+    )
+    out1 = messages.TxOutputType(
+        # 86'/1'/0'/0/0
+        address="tgrs1pswrqtykue8r89t9u4rprjs0gt4qzkdfuursfnvqaa3f2yql07zmq5v2q7z",
+        amount=4300,
+        script_type=messages.OutputScriptType.PAYTOADDRESS,
+    )
+    _, serialized_tx = btc.sign_tx(
+        client, "Groestlcoin Testnet", [inp1], [out1], prev_txes=TX_API_TESTNET
+    )
+    # https://blockbook-test.groestlcoin.org/tx/c66a79075044aaab3dba17daffb23f48addee87d7c87c7bc88e2997ce38a74ee
+    assert (
+        serialized_tx.hex()
+        == "010000000001018c6777d7baf0690b81057a627e12f0a8fc0ff4c512024b1082404b88afb9ae450000000000ffffffff01cc1000000000000022512083860592dcc9c672acbca8c23941e85d402b353ce0e099b01dec52a203eff0b6014067e8ab9695b22bbe6487d350826357bd920869c4b5077c324fc51a9b42bd7ef17ac7525301437a5b208276c66334766dbdac542fd29d3b949ef78e518bbd383700000000"
     )
