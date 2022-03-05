@@ -1,11 +1,24 @@
-if False:
-    from typing import TYPE_CHECKING
-else:
-    TYPE_CHECKING = False
-
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from enum import IntEnum
+
+    class BinanceOrderType(IntEnum):
+        OT_UNKNOWN = 0
+        MARKET = 1
+        LIMIT = 2
+        OT_RESERVED = 3
+
+    class BinanceOrderSide(IntEnum):
+        SIDE_UNKNOWN = 0
+        BUY = 1
+        SELL = 2
+
+    class BinanceTimeInForce(IntEnum):
+        TIF_UNKNOWN = 0
+        GTE = 1
+        TIF_RESERVED = 2
+        IOC = 3
 
     class MessageType(IntEnum):
         Initialize = 0
@@ -27,6 +40,8 @@ if TYPE_CHECKING:
         ButtonRequest = 26
         ButtonAck = 27
         ApplyFlags = 28
+        GetNonce = 31
+        Nonce = 33
         BackupDevice = 34
         EntropyRequest = 35
         EntropyAck = 36
@@ -59,6 +74,7 @@ if TYPE_CHECKING:
         TxAck = 22
         GetAddress = 29
         Address = 30
+        TxAckPaymentRequest = 37
         SignMessage = 38
         VerifyMessage = 39
         MessageSignature = 40
@@ -230,23 +246,6 @@ if TYPE_CHECKING:
         WebAuthnAddResidentCredential = 802
         WebAuthnRemoveResidentCredential = 803
 
-    class BinanceOrderType(IntEnum):
-        OT_UNKNOWN = 0
-        MARKET = 1
-        LIMIT = 2
-        OT_RESERVED = 3
-
-    class BinanceOrderSide(IntEnum):
-        SIDE_UNKNOWN = 0
-        BUY = 1
-        SELL = 2
-
-    class BinanceTimeInForce(IntEnum):
-        TIF_UNKNOWN = 0
-        GTE = 1
-        TIF_RESERVED = 2
-        IOC = 3
-
     class FailureType(IntEnum):
         UnexpectedMessage = 1
         ButtonExpected = 2
@@ -328,6 +327,7 @@ if TYPE_CHECKING:
         TXEXTRADATA = 4
         TXORIGINPUT = 5
         TXORIGOUTPUT = 6
+        TXPAYMENTREQ = 7
 
     class CardanoDerivationType(IntEnum):
         LEDGER = 0
@@ -432,6 +432,11 @@ if TYPE_CHECKING:
         DOWN = 1
         LEFT = 2
         RIGHT = 3
+
+    class DebugButton(IntEnum):
+        NO = 0
+        YES = 1
+        INFO = 2
 
     class EthereumDataType(IntEnum):
         UINT = 1

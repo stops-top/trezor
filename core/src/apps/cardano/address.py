@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from trezor.crypto import base58
 from trezor.enums import CardanoAddressType
 
@@ -15,7 +17,7 @@ from .helpers.paths import SCHEMA_STAKING_ANY_ACCOUNT
 from .helpers.utils import get_public_key_hash, variable_length_encode
 from .seed import is_byron_path, is_shelley_path
 
-if False:
+if TYPE_CHECKING:
     from typing import Any
 
     from trezor.messages import (
@@ -280,7 +282,7 @@ def get_address_bytes_unsafe(address: str) -> bytes:
 
 
 def _get_address_type(address: bytes) -> CardanoAddressType:
-    return address[0] >> 4  # type: ignore
+    return address[0] >> 4  # type: ignore [int-into-enum]
 
 
 def _validate_shelley_address(

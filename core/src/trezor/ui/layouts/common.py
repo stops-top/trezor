@@ -1,13 +1,15 @@
+from typing import TYPE_CHECKING
+
 from trezor import log, wire, workflow
 from trezor.enums import ButtonRequestType
 from trezor.messages import ButtonAck, ButtonRequest
 
-if False:
-    from typing import Any, Awaitable, Optional, Tuple, Type, Union
+if TYPE_CHECKING:
+    from typing import Any, Awaitable
 
     LayoutType = Awaitable[Any]
-    PropertyType = Tuple[Optional[str], Union[str, bytes, None]]
-    ExceptionType = Union[BaseException, Type[BaseException]]
+    PropertyType = tuple[str | None, str | bytes | None]
+    ExceptionType = BaseException | type[BaseException]
 
 
 if __debug__:

@@ -126,9 +126,7 @@ void fsm_msgEthereumGetAddress(const EthereumGetAddress *msg) {
   }
 
   resp->has_address = true;
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, rskip60, chain_id);
+  ethereum_address_checksum(pubkeyhash, resp->address, rskip60, chain_id);
   // ethereum_address_checksum adds trailing zero
 
   if (msg->has_show_display && msg->show_display) {
@@ -161,9 +159,7 @@ void fsm_msgEthereumSignMessage(const EthereumSignMessage *msg) {
     return;
   }
 
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+  ethereum_address_checksum(pubkeyhash, resp->address, false, 0);
   // ethereum_address_checksum adds trailing zero
 
   layoutVerifyAddress(NULL, resp->address);
@@ -208,6 +204,14 @@ void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage *msg) {
     return;
   }
 
+  layoutDialogSwipe(&bmp_icon_ok, NULL, _("Continue"), NULL, NULL,
+                    _("The signature is valid."), NULL, NULL, NULL, NULL);
+  if (!protectButton(ButtonRequestType_ButtonRequest_Other, true)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
   fsm_sendSuccess(_("Message verified"));
 
   layoutHome();
@@ -220,7 +224,8 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash *msg) {
 
   CHECK_PIN
 
-  if (msg->domain_separator_hash.size != 32 || msg->message_hash.size != 32) {
+  if (msg->domain_separator_hash.size != 32 ||
+      (msg->has_message_hash && msg->message_hash.size != 32)) {
     fsm_sendFailure(FailureType_Failure_DataError, _("Invalid hash length"));
     return;
   }
@@ -243,9 +248,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash *msg) {
     return;
   }
 
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+  ethereum_address_checksum(pubkeyhash, resp->address, false, 0);
   // ethereum_address_checksum adds trailing zero
 
   layoutVerifyAddress(NULL, resp->address);
@@ -262,12 +265,17 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash *msg) {
     layoutHome();
     return;
   }
-  layoutConfirmHash(&bmp_icon_warning, _("EIP-712 message hash"),
-                    msg->message_hash.bytes, 32);
-  if (!protectButton(ButtonRequestType_ButtonRequest_Other, false)) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-    layoutHome();
-    return;
+
+  // No message hash when setting primaryType="EIP712Domain"
+  // https://ethereum-magicians.org/t/eip-712-standards-clarification-primarytype-as-domaintype/3286
+  if (msg->has_message_hash) {
+    layoutConfirmHash(&bmp_icon_warning, _("EIP-712 message hash"),
+                      msg->message_hash.bytes, 32);
+    if (!protectButton(ButtonRequestType_ButtonRequest_Other, false)) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      layoutHome();
+      return;
+    }
   }
 
   ethereum_typed_hash_sign(msg, node, resp);

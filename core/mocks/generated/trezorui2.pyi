@@ -2,18 +2,29 @@ from typing import *
 
 
 # extmod/rustmods/modtrezorui2.c
-def layout_new_example(text: str) -> None:
+def layout_new_confirm_action(
+    *,
+    title: str,
+    action: str | None = None,
+    description: str | None = None,
+    verb: str | None = None,
+    verb_cancel: str | None = None,
+    hold: bool | None = None,
+    reverse: bool = False,
+) -> object:
     """Example layout."""
 
 
 # extmod/rustmods/modtrezorui2.c
-def layout_new_confirm_action(
+def layout_new_example(text: str) -> object:
+    """Example layout."""
+
+
+# extmod/rustmods/modtrezorui2.c
+def layout_new_confirm_text(
+    *,
     title: str,
-    action: str | None,
+    data: str,
     description: str | None,
-    verb: str | None,
-    verb_cancel: str | None,
-    hold: bool | None,
-    reverse: bool,
-) -> int:
-    """Example layout. All arguments must be passed as kwargs."""
+) -> object:
+    """Example layout."""

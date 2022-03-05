@@ -1,10 +1,9 @@
-use core::convert::{TryFrom, TryInto};
+use core::convert::TryInto;
 
 use crate::{
-    error::Error,
     micropython::{buffer::Buffer, map::Map, obj::Obj, qstr::Qstr},
     ui::{
-        component::{Child, Text},
+        component::{text::paragraphs::Paragraphs, FormattedText},
         display,
         layout::obj::LayoutObj,
     },
@@ -12,25 +11,9 @@ use crate::{
 };
 
 use super::{
-    component::{Button, Dialog, DialogMsg},
+    component::{Button, ButtonPage, Frame},
     theme,
 };
-
-impl<T> TryFrom<DialogMsg<T>> for Obj
-where
-    Obj: TryFrom<T>,
-    Error: From<<T as TryInto<Obj>>::Error>,
-{
-    type Error = Error;
-
-    fn try_from(val: DialogMsg<T>) -> Result<Self, Self::Error> {
-        match val {
-            DialogMsg::Content(c) => Ok(c.try_into()?),
-            DialogMsg::LeftClicked => 1.try_into(),
-            DialogMsg::RightClicked => 2.try_into(),
-        }
-    }
-}
 
 #[no_mangle]
 extern "C" fn ui_layout_new_confirm_action(
@@ -61,17 +44,48 @@ extern "C" fn ui_layout_new_confirm_action(
         let right = verb
             .map(|label| |area, pos| Button::with_text(area, pos, label, theme::button_default()));
 
-        let obj = LayoutObj::new(Child::new(Dialog::new(
-            display::screen(),
-            |area| {
-                Text::new::<theme::T1DefaultText>(area, format)
-                    .with(b"action", action.unwrap_or("".into()))
-                    .with(b"description", description.unwrap_or("".into()))
-            },
-            left,
-            right,
-            Some(title),
-        )))?;
+        let obj = LayoutObj::new(Frame::new(display::screen(), title, |area| {
+            ButtonPage::new(
+                area,
+                |area| {
+                    FormattedText::new::<theme::T1DefaultText>(area, format)
+                        .with(b"action", action.unwrap_or("".into()))
+                        .with(b"description", description.unwrap_or("".into()))
+                },
+                theme::BG,
+            )
+        }))?;
+        Ok(obj.into())
+    };
+    unsafe { util::try_with_args_and_kwargs(n_args, args, kwargs, block) }
+}
+
+#[no_mangle]
+extern "C" fn ui_layout_new_confirm_text(
+    n_args: usize,
+    args: *const Obj,
+    kwargs: *const Map,
+) -> Obj {
+    let block = |_args: &[Obj], kwargs: &Map| {
+        let title: Buffer = kwargs.get(Qstr::MP_QSTR_title)?.try_into()?;
+        let data: Buffer = kwargs.get(Qstr::MP_QSTR_data)?.try_into()?;
+        let description: Option<Buffer> =
+            kwargs.get(Qstr::MP_QSTR_description)?.try_into_option()?;
+
+        let obj = LayoutObj::new(Frame::new(display::screen(), title, |area| {
+            ButtonPage::new(
+                area,
+                |area| {
+                    Paragraphs::new(area)
+                        .add::<theme::T1DefaultText>(
+                            theme::FONT_NORMAL,
+                            description.unwrap_or("".into()),
+                        )
+                        .add::<theme::T1DefaultText>(theme::FONT_BOLD, data)
+                },
+                theme::BG,
+            )
+        }))?;
         Ok(obj.into())
     };
     unsafe { util::try_with_args_and_kwargs(n_args, args, kwargs, block) }
@@ -79,40 +93,13 @@ extern "C" fn ui_layout_new_confirm_action(
 
 #[cfg(test)]
 mod tests {
-    use crate::trace::{Trace, Tracer};
+    use crate::{
+        error::Error,
+        trace::Trace,
+        ui::model_t1::component::{Dialog, DialogMsg},
+    };
 
     use super::*;
-
-    impl Tracer for Vec<u8> {
-        fn bytes(&mut self, b: &[u8]) {
-            self.extend(b)
-        }
-
-        fn string(&mut self, s: &str) {
-            self.extend(s.as_bytes())
-        }
-
-        fn symbol(&mut self, name: &str) {
-            self.extend(name.as_bytes())
-        }
-
-        fn open(&mut self, name: &str) {
-            self.extend(b"<");
-            self.extend(name.as_bytes());
-            self.extend(b" ");
-        }
-
-        fn field(&mut self, name: &str, value: &dyn Trace) {
-            self.extend(name.as_bytes());
-            self.extend(b":");
-            value.trace(self);
-            self.extend(b" ");
-        }
-
-        fn close(&mut self) {
-            self.extend(b">")
-        }
-    }
 
     fn trace(val: &impl Trace) -> String {
         let mut t = Vec::new();
@@ -120,12 +107,28 @@ mod tests {
         String::from_utf8(t).unwrap()
     }
 
+    impl<T> TryFrom<DialogMsg<T>> for Obj
+    where
+        Obj: TryFrom<T>,
+        Error: From<<T as TryInto<Obj>>::Error>,
+    {
+        type Error = Error;
+
+        fn try_from(val: DialogMsg<T>) -> Result<Self, Self::Error> {
+            match val {
+                DialogMsg::Content(c) => Ok(c.try_into()?),
+                DialogMsg::LeftClicked => 1.try_into(),
+                DialogMsg::RightClicked => 2.try_into(),
+            }
+        }
+    }
+
     #[test]
     fn trace_example_layout() {
-        let layout = Child::new(Dialog::new(
+        let layout = Dialog::new(
             display::screen(),
             |area| {
-                Text::new::<theme::T1DefaultText>(
+                FormattedText::new::<theme::T1DefaultText>(
                     area,
                     "Testing text layout, with some text, and some more text. And {param}",
                 )
@@ -133,14 +136,38 @@ mod tests {
             },
             Some(|area, pos| Button::with_text(area, pos, "Left", theme::button_cancel())),
             Some(|area, pos| Button::with_text(area, pos, "Right", theme::button_default())),
-            None,
-        ));
+        );
         assert_eq!(
             trace(&layout),
             r#"<Dialog content:<Text content:Testing text layout,
 with some text, and
 some more text. And p-
 arameters! > left:<Button text:Left > right:<Button text:Right > >"#
+        )
+    }
+
+    #[test]
+    fn trace_layout_title() {
+        let layout = Frame::new(display::screen(), "Please confirm", |area| {
+            Dialog::new(
+                area,
+                |area| {
+                    FormattedText::new::<theme::T1DefaultText>(
+                        area,
+                        "Testing text layout, with some text, and some more text. And {param}",
+                    )
+                    .with(b"param", b"parameters!")
+                },
+                Some(|area, pos| Button::with_text(area, pos, "Left", theme::button_cancel())),
+                Some(|area, pos| Button::with_text(area, pos, "Right", theme::button_default())),
+            )
+        });
+        assert_eq!(
+            trace(&layout),
+            r#"<Frame title:Please confirm content:<Dialog content:<Text content:Testing text layout,
+with some text, and
+some more text. And p-
+arameters! > left:<Button text:Left > right:<Button text:Right > > >"#
         )
     }
 }

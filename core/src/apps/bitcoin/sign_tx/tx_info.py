@@ -1,4 +1,5 @@
 from micropython import const
+from typing import TYPE_CHECKING
 
 from trezor import wire
 from trezor.crypto.hashlib import sha256
@@ -8,7 +9,7 @@ from .. import common, writers
 from ..common import BIP32_WALLET_DEPTH, input_is_external
 from .matchcheck import MultisigFingerprintChecker, WalletPathChecker
 
-if False:
+if TYPE_CHECKING:
     from typing import Protocol
     from trezor.messages import (
         PrevTx,
@@ -21,7 +22,7 @@ if False:
     from apps.common.coininfo import CoinInfo
 
     class Signer(Protocol):
-        coin = ...  # type: CoinInfo
+        coin: CoinInfo
 
         def create_hash_writer(self) -> HashWriter:
             ...
@@ -142,7 +143,7 @@ class OriginalTxInfo(TxInfoBase):
         # Transaction hasher to compute the TXID.
         self.h_tx = signer.create_hash_writer()
         signer.write_tx_header(self.h_tx, tx, witness_marker=False)
-        writers.write_bitcoin_varint(self.h_tx, tx.inputs_count)
+        writers.write_compact_size(self.h_tx, tx.inputs_count)
 
         # The input which will be used for verification and its index in the original transaction.
         self.verification_input: TxInput | None = None
@@ -161,7 +162,7 @@ class OriginalTxInfo(TxInfoBase):
         super().add_output(txo, script_pubkey)
 
         if self.index == 0:
-            writers.write_bitcoin_varint(self.h_tx, self.tx.outputs_count)
+            writers.write_compact_size(self.h_tx, self.tx.outputs_count)
 
         writers.write_tx_output(self.h_tx, txo, script_pubkey)
 

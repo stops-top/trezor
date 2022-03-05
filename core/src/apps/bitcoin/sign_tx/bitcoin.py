@@ -1,4 +1,5 @@
 from micropython import const
+from typing import TYPE_CHECKING
 
 from trezor import wire
 from trezor.crypto.hashlib import sha256
@@ -6,7 +7,7 @@ from trezor.enums import InputScriptType, OutputScriptType
 from trezor.messages import TxRequest, TxRequestDetailsType, TxRequestSerializedType
 from trezor.utils import HashWriter, empty_bytearray, ensure
 
-from apps.common.writers import write_bitcoin_varint
+from apps.common.writers import write_compact_size
 
 from .. import addresses, common, multisig, scripts, writers
 from ..common import (
@@ -22,7 +23,7 @@ from . import approvers, helpers, progress
 from .sig_hasher import BitcoinSigHasher
 from .tx_info import OriginalTxInfo, TxInfo
 
-if False:
+if TYPE_CHECKING:
     from typing import Sequence
 
     from trezor.crypto import bip32
@@ -124,6 +125,9 @@ class Bitcoin:
         # the inputs streamed for verification in Step 3 are the same as those in Step 1.
         self.h_inputs: bytes | None = None
         self.h_external_inputs: bytes | None = None
+
+        # The index of the payment request being processed.
+        self.payment_req_index: int | None = None
 
         progress.init(tx.inputs_count, tx.outputs_count)
 
@@ -237,7 +241,7 @@ class Bitcoin:
 
     async def step4_serialize_inputs(self) -> None:
         self.write_tx_header(self.serialized_tx, self.tx_info.tx, bool(self.segwit))
-        write_bitcoin_varint(self.serialized_tx, self.tx_info.tx.inputs_count)
+        write_compact_size(self.serialized_tx, self.tx_info.tx.inputs_count)
         for i in range(self.tx_info.tx.inputs_count):
             progress.advance()
             if i in self.external:
@@ -248,7 +252,7 @@ class Bitcoin:
                 await self.sign_nonsegwit_input(i)
 
     async def step5_serialize_outputs(self) -> None:
-        write_bitcoin_varint(self.serialized_tx, self.tx_info.tx.outputs_count)
+        write_compact_size(self.serialized_tx, self.tx_info.tx.outputs_count)
         for i in range(self.tx_info.tx.outputs_count):
             progress.advance()
             await self.serialize_output(i)
@@ -426,6 +430,19 @@ class Bitcoin:
         script_pubkey: bytes,
         orig_txo: TxOutput | None,
     ) -> None:
+        if txo.payment_req_index != self.payment_req_index:
+            if txo.payment_req_index is None:
+                # TODO not needed
+                self.approver.finish_payment_request()
+            else:
+                tx_ack_payment_req = await helpers.request_payment_req(
+                    self.tx_req, txo.payment_req_index
+                )
+                await self.approver.add_payment_request(
+                    tx_ack_payment_req, self.keychain
+                )
+            self.payment_req_index = txo.payment_req_index
+
         if self.tx_info.output_is_change(txo):
             # Output is change and does not need approval.
             self.approver.add_change_output(txo, script_pubkey)
@@ -609,8 +626,10 @@ class Bitcoin:
         h_check = HashWriter(sha256())
 
         self.write_tx_header(h_sign, tx_info.tx, witness_marker=False)
-        write_bitcoin_varint(h_sign, tx_info.tx.inputs_count)
+        write_compact_size(h_sign, tx_info.tx.inputs_count)
 
+        txi_sign = None
+        node = None
         for i in range(tx_info.tx.inputs_count):
             # STAGE_REQUEST_4_INPUT in legacy
             txi = await helpers.request_tx_input(self.tx_req, i, self.coin, tx_hash)
@@ -618,7 +637,6 @@ class Bitcoin:
             # Only the previous UTXO's scriptPubKey is included in h_sign.
             if i == index:
                 txi_sign = txi
-                node = None
                 if not script_pubkey:
                     self.tx_info.check_input(txi)
                     node = self.keychain.derive(txi.address_n)
@@ -643,7 +661,10 @@ class Bitcoin:
             else:
                 self.write_tx_input(h_sign, txi, bytes())
 
-        write_bitcoin_varint(h_sign, tx_info.tx.outputs_count)
+        if txi_sign is None:
+            raise RuntimeError  # index >= tx_info.tx.inputs_count
+
+        write_compact_size(h_sign, tx_info.tx.outputs_count)
 
         for i in range(tx_info.tx.outputs_count):
             # STAGE_REQUEST_4_OUTPUT in legacy
@@ -701,7 +722,7 @@ class Bitcoin:
 
         # witnesses are not included in txid hash
         self.write_tx_header(txh, tx, witness_marker=False)
-        write_bitcoin_varint(txh, tx.inputs_count)
+        write_compact_size(txh, tx.inputs_count)
 
         for i in range(tx.inputs_count):
             # STAGE_REQUEST_3_PREV_INPUT in legacy
@@ -710,8 +731,9 @@ class Bitcoin:
             )
             self.write_tx_input(txh, txi, txi.script_sig)
 
-        write_bitcoin_varint(txh, tx.outputs_count)
+        write_compact_size(txh, tx.outputs_count)
 
+        script_pubkey: bytes | None = None
         for i in range(tx.outputs_count):
             # STAGE_REQUEST_3_PREV_OUTPUT in legacy
             txo_bin = await helpers.request_tx_prev_output(
@@ -722,6 +744,8 @@ class Bitcoin:
                 amount_out = txo_bin.amount
                 script_pubkey = txo_bin.script_pubkey
                 self.check_prevtx_output(txo_bin)
+
+        assert script_pubkey is not None  # prev_index < tx.outputs_count
 
         await self.write_prev_tx_footer(txh, tx, prev_hash)
 
@@ -748,11 +772,11 @@ class Bitcoin:
             return SigHashType.SIGHASH_ALL
 
     def get_sighash_type(self, txi: TxInput) -> SigHashType:
-        """ Return the nHashType flags."""
+        """Return the nHashType flags."""
         # The nHashType is the 8 least significant bits of the sighash type.
         # Some coins set the 24 most significant bits of the sighash type to
         # the fork ID value.
-        return self.get_hash_type(txi) & 0xFF  # type: ignore
+        return self.get_hash_type(txi) & 0xFF  # type: ignore [int-into-enum]
 
     def write_tx_input_derived(
         self,
@@ -798,8 +822,8 @@ class Bitcoin:
     ) -> None:
         writers.write_uint32(w, tx.version)  # nVersion
         if witness_marker:
-            write_bitcoin_varint(w, 0x00)  # segwit witness marker
-            write_bitcoin_varint(w, 0x01)  # segwit witness flag
+            write_compact_size(w, 0x00)  # segwit witness marker
+            write_compact_size(w, 0x01)  # segwit witness flag
 
     def write_tx_footer(self, w: writers.Writer, tx: SignTx | PrevTx) -> None:
         writers.write_uint32(w, tx.lock_time)

@@ -1,4 +1,5 @@
 from micropython import const
+from typing import TYPE_CHECKING
 
 from trezor import log, wire
 from trezor.crypto import hashlib
@@ -105,11 +106,11 @@ from .layout import (
 )
 from .seed import is_byron_path, is_multisig_path, is_shelley_path
 
-if False:
-    from typing import Any, Union
+if TYPE_CHECKING:
+    from typing import Any
     from apps.common.paths import PathSchema
 
-    CardanoTxResponseType = Union[CardanoTxItemAck, CardanoTxWitnessResponse]
+    CardanoTxResponseType = CardanoTxItemAck | CardanoTxWitnessResponse
 
 MINTING_POLICY_ID_LENGTH = 28
 MAX_ASSET_NAME_LENGTH = 32

@@ -1,12 +1,14 @@
 use crate::ui::{
-    component::{label::LabelStyle, text::DefaultTextTheme},
-    display::{Color, Font},
+    component::{label::LabelStyle, text::layout::DefaultTextTheme},
+    display::{self, Color, Font},
+    geometry::{Insets, Rect},
 };
 
-use super::component::{ButtonStyle, ButtonStyleSheet};
+use super::component::{ButtonStyle, ButtonStyleSheet, LoaderStyle, LoaderStyleSheet};
 
 // Font constants.
 pub const FONT_NORMAL: Font = Font::new(-1);
+pub const FONT_MEDIUM: Font = Font::new(-5);
 pub const FONT_BOLD: Font = Font::new(-2);
 pub const FONT_MONO: Font = Font::new(-3);
 
@@ -30,15 +32,17 @@ pub const GREY_LIGHT: Color = Color::rgb(168, 168, 168); // greyish
 pub const GREY_DARK: Color = Color::rgb(51, 51, 51); // black
 
 // Commonly used corner radius (i.e. for buttons).
-pub const RADIUS: u8 = 4;
+pub const RADIUS: u8 = 2;
 
 // Size of icons in the UI (i.e. inside buttons).
 pub const ICON_SIZE: i32 = 16;
 
 // UI icons.
-pub const ICON_CANCEL: &[u8] = include_res!("cancel.toif");
-pub const ICON_CONFIRM: &[u8] = include_res!("confirm.toif");
-pub const ICON_SPACE: &[u8] = include_res!("space.toif");
+pub const ICON_CANCEL: &[u8] = include_res!("model_tt/res/cancel.toif");
+pub const ICON_CONFIRM: &[u8] = include_res!("model_tt/res/confirm.toif");
+pub const ICON_SPACE: &[u8] = include_res!("model_tt/res/space.toif");
+pub const ICON_BACK: &[u8] = include_res!("model_tt/res/left.toif");
+pub const ICON_CLICK: &[u8] = include_res!("model_tt/res/click.toif");
 
 pub fn label_default() -> LabelStyle {
     LabelStyle {
@@ -51,37 +55,65 @@ pub fn label_default() -> LabelStyle {
 pub fn button_default() -> ButtonStyleSheet {
     ButtonStyleSheet {
         normal: &ButtonStyle {
-            font: FONT_NORMAL,
+            font: FONT_BOLD,
             text_color: FG,
             button_color: GREY_DARK,
             background_color: BG,
             border_color: BG,
             border_radius: RADIUS,
-            border_width: 2,
+            border_width: 0,
         },
         active: &ButtonStyle {
-            font: FONT_NORMAL,
+            font: FONT_BOLD,
             text_color: BG,
             button_color: FG,
             background_color: BG,
             border_color: FG,
             border_radius: RADIUS,
-            border_width: 2,
+            border_width: 0,
         },
         disabled: &ButtonStyle {
-            font: FONT_NORMAL,
+            font: FONT_BOLD,
             text_color: GREY_LIGHT,
             button_color: GREY_DARK,
             background_color: BG,
             border_color: BG,
             border_radius: RADIUS,
-            border_width: 2,
+            border_width: 0,
         },
     }
 }
 
 pub fn button_confirm() -> ButtonStyleSheet {
-    button_default()
+    ButtonStyleSheet {
+        normal: &ButtonStyle {
+            font: FONT_BOLD,
+            text_color: FG,
+            button_color: GREEN,
+            background_color: BG,
+            border_color: BG,
+            border_radius: RADIUS,
+            border_width: 0,
+        },
+        active: &ButtonStyle {
+            font: FONT_BOLD,
+            text_color: BG,
+            button_color: FG,
+            background_color: BG,
+            border_color: FG,
+            border_radius: RADIUS,
+            border_width: 0,
+        },
+        disabled: &ButtonStyle {
+            font: FONT_BOLD,
+            text_color: GREY_LIGHT,
+            button_color: GREEN,
+            background_color: BG,
+            border_color: BG,
+            border_radius: RADIUS,
+            border_width: 0,
+        },
+    }
 }
 
 pub fn button_cancel() -> ButtonStyleSheet {
@@ -90,6 +122,21 @@ pub fn button_cancel() -> ButtonStyleSheet {
 
 pub fn button_clear() -> ButtonStyleSheet {
     button_default()
+}
+
+pub fn loader_default() -> LoaderStyleSheet {
+    LoaderStyleSheet {
+        normal: &LoaderStyle {
+            icon: None,
+            loader_color: FG,
+            background_color: BG,
+        },
+        active: &LoaderStyle {
+            icon: None,
+            loader_color: GREEN,
+            background_color: BG,
+        },
+    }
 }
 
 pub struct TTDefaultText;
@@ -104,6 +151,20 @@ impl DefaultTextTheme for TTDefaultText {
     const ELLIPSIS_COLOR: Color = GREY_LIGHT;
 
     const NORMAL_FONT: Font = FONT_NORMAL;
+    const MEDIUM_FONT: Font = FONT_MEDIUM;
     const BOLD_FONT: Font = FONT_BOLD;
     const MONO_FONT: Font = FONT_MONO;
+}
+
+pub const CONTENT_BORDER: i32 = 5;
+
+/// +----------+
+/// |    13    |
+/// |  +----+  |
+/// |10|    | 5|
+/// |  +----+  |
+/// |    14    |
+/// +----------+
+pub fn borders() -> Rect {
+    display::screen().inset(Insets::new(13, 5, 14, 10))
 }

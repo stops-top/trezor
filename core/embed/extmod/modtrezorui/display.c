@@ -30,17 +30,49 @@
 
 #if TREZOR_MODEL == T
 
+// TT new rust UI
+#if TREZOR_UI2
+
 #ifdef TREZOR_FONT_NORMAL_ENABLE
-#include "font_roboto_regular_20.h"
-#define FONT_NORMAL_DATA Font_Roboto_Regular_20
+#include "font_tthoves_regular_18.h"
+#define FONT_NORMAL_DATA Font_TTHoves_Regular_18
+#define FONT_NORMAL_HEIGHT 18
+#endif
+#ifdef TREZOR_FONT_MEDIUM_ENABLE
+#include "font_tthoves_medium_20.h"
+#define FONT_MEDIUM_DATA Font_TTHoves_Medium_20
+#define FONT_MEDIUM_HEIGHT 20
 #endif
 #ifdef TREZOR_FONT_BOLD_ENABLE
-#include "font_roboto_bold_20.h"
-#define FONT_BOLD_DATA Font_Roboto_Bold_20
+#include "font_tthoves_bold_16.h"
+#define FONT_BOLD_DATA Font_TTHoves_Bold_16
+#define FONT_BOLD_HEIGHT 16
 #endif
 #ifdef TREZOR_FONT_MONO_ENABLE
 #include "font_robotomono_regular_20.h"
 #define FONT_MONO_DATA Font_RobotoMono_Regular_20
+#define FONT_MONO_HEIGHT 20
+#endif
+
+// TT old python UI
+#else
+
+#ifdef TREZOR_FONT_NORMAL_ENABLE
+#include "font_roboto_regular_20.h"
+#define FONT_NORMAL_DATA Font_Roboto_Regular_20
+#define FONT_NORMAL_HEIGHT 20
+#endif
+#ifdef TREZOR_FONT_BOLD_ENABLE
+#include "font_roboto_bold_20.h"
+#define FONT_BOLD_DATA Font_Roboto_Bold_20
+#define FONT_BOLD_HEIGHT 20
+#endif
+#ifdef TREZOR_FONT_MONO_ENABLE
+#include "font_robotomono_regular_20.h"
+#define FONT_MONO_DATA Font_RobotoMono_Regular_20
+#define FONT_MONO_HEIGHT 20
+#endif
+
 #endif
 
 #elif TREZOR_MODEL == 1
@@ -48,14 +80,22 @@
 #ifdef TREZOR_FONT_NORMAL_ENABLE
 #include "font_pixeloperator_regular_8.h"
 #define FONT_NORMAL_DATA Font_PixelOperator_Regular_8
+#define FONT_NORMAL_HEIGHT 8
+#endif
+#ifdef TREZOR_FONT_MEDIUM_ENABLE
+#include "font_pixeloperator_regular_8.h"
+#define FONT_MEDIUM_DATA Font_PixelOperator_Regular_8
+#define FONT_MEDIUM_HEIGHT 8
 #endif
 #ifdef TREZOR_FONT_BOLD_ENABLE
 #include "font_pixeloperator_bold_8.h"
 #define FONT_BOLD_DATA Font_PixelOperator_Bold_8
+#define FONT_BOLD_HEIGHT 8
 #endif
 #ifdef TREZOR_FONT_MONO_ENABLE
 #include "font_pixeloperatormono_regular_8.h"
 #define FONT_MONO_DATA Font_PixelOperatorMono_Regular_8
+#define FONT_MONO_HEIGHT 8
 #endif
 
 #else
@@ -407,11 +447,11 @@ void display_loader(uint16_t progress, bool indeterminate, int yoffset,
                      DISPLAY_RESY / 2 - img_loader_size + yoffset,
                      DISPLAY_RESX / 2 + img_loader_size - 1,
                      DISPLAY_RESY / 2 + img_loader_size - 1 + yoffset);
+  uint8_t icondata[(LOADER_ICON_SIZE * LOADER_ICON_SIZE) / 2] = {0};
   if (icon && memcmp(icon, "TOIg", 4) == 0 &&
       LOADER_ICON_SIZE == *(uint16_t *)(icon + 4) &&
       LOADER_ICON_SIZE == *(uint16_t *)(icon + 6) &&
       iconlen == 12 + *(uint32_t *)(icon + 8)) {
-    uint8_t icondata[(LOADER_ICON_SIZE * LOADER_ICON_SIZE) / 2] = {0};
     memzero(&icondata, sizeof(icondata));
     struct uzlib_uncomp decomp = {0};
     uzlib_prepare(&decomp, NULL, icon + 12, iconlen - 12, icondata,
@@ -632,6 +672,10 @@ static const uint8_t *get_glyph(int font, uint8_t c) {
       case FONT_NORMAL:
         return FONT_NORMAL_DATA[c - ' '];
 #endif
+#ifdef TREZOR_FONT_MEDIUM_ENABLE
+      case FONT_MEDIUM:
+        return FONT_MEDIUM_DATA[c - ' '];
+#endif
 #ifdef TREZOR_FONT_BOLD_ENABLE
       case FONT_BOLD:
         return FONT_BOLD_DATA[c - ' '];
@@ -652,6 +696,10 @@ static const uint8_t *get_glyph(int font, uint8_t c) {
 #ifdef TREZOR_FONT_NORMAL_ENABLE
     case FONT_NORMAL:
       return NONPRINTABLE_GLYPH(FONT_NORMAL_DATA);
+#endif
+#ifdef TREZOR_FONT_MEDIUM_ENABLE
+    case FONT_MEDIUM:
+      return NONPRINTABLE_GLYPH(FONT_MEDIUM_DATA);
 #endif
 #ifdef TREZOR_FONT_BOLD_ENABLE
     case FONT_BOLD:
@@ -791,6 +839,28 @@ int display_text_split(const char *text, int textlen, int font,
     }
   }
   return textlen;
+}
+
+int display_text_height(int font) {
+  switch (font) {
+#ifdef TREZOR_FONT_NORMAL_ENABLE
+    case FONT_NORMAL:
+      return FONT_NORMAL_HEIGHT;
+#endif
+#ifdef TREZOR_FONT_MEDIUM_ENABLE
+    case FONT_MEDIUM:
+      return FONT_MEDIUM_HEIGHT;
+#endif
+#ifdef TREZOR_FONT_BOLD_ENABLE
+    case FONT_BOLD:
+      return FONT_BOLD_HEIGHT;
+#endif
+#ifdef TREZOR_FONT_MONO_ENABLE
+    case FONT_MONO:
+      return FONT_MONO_HEIGHT;
+#endif
+  }
+  return 0;
 }
 
 #define QR_MAX_VERSION 9
