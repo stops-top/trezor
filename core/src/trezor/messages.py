@@ -926,8 +926,9 @@ if TYPE_CHECKING:
 
     class AuthorizeCoinJoin(protobuf.MessageType):
         coordinator: "str"
-        max_total_fee: "int"
-        fee_per_anonymity: "int"
+        max_rounds: "int"
+        max_coordinator_fee_rate: "int"
+        max_fee_per_kvbyte: "int"
         address_n: "list[int]"
         coin_name: "str"
         script_type: "InputScriptType"
@@ -937,9 +938,10 @@ if TYPE_CHECKING:
             self,
             *,
             coordinator: "str",
-            max_total_fee: "int",
+            max_rounds: "int",
+            max_coordinator_fee_rate: "int",
+            max_fee_per_kvbyte: "int",
             address_n: "list[int] | None" = None,
-            fee_per_anonymity: "int | None" = None,
             coin_name: "str | None" = None,
             script_type: "InputScriptType | None" = None,
             amount_unit: "AmountUnit | None" = None,
@@ -1329,6 +1331,10 @@ if TYPE_CHECKING:
         witness_requests_count: "int"
         minting_asset_groups_count: "int"
         derivation_type: "CardanoDerivationType"
+        include_network_id: "bool"
+        script_data_hash: "bytes | None"
+        collateral_inputs_count: "int"
+        required_signers_count: "int"
 
         def __init__(
             self,
@@ -1345,8 +1351,12 @@ if TYPE_CHECKING:
             witness_requests_count: "int",
             minting_asset_groups_count: "int",
             derivation_type: "CardanoDerivationType",
+            collateral_inputs_count: "int",
+            required_signers_count: "int",
             ttl: "int | None" = None,
             validity_interval_start: "int | None" = None,
+            include_network_id: "bool | None" = None,
+            script_data_hash: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -1375,6 +1385,7 @@ if TYPE_CHECKING:
         address_parameters: "CardanoAddressParametersType | None"
         amount: "int"
         asset_groups_count: "int"
+        datum_hash: "bytes | None"
 
         def __init__(
             self,
@@ -1383,6 +1394,7 @@ if TYPE_CHECKING:
             asset_groups_count: "int",
             address: "str | None" = None,
             address_parameters: "CardanoAddressParametersType | None" = None,
+            datum_hash: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -1516,6 +1528,7 @@ if TYPE_CHECKING:
         pool: "bytes | None"
         pool_parameters: "CardanoPoolParametersType | None"
         script_hash: "bytes | None"
+        key_hash: "bytes | None"
 
         def __init__(
             self,
@@ -1525,6 +1538,7 @@ if TYPE_CHECKING:
             pool: "bytes | None" = None,
             pool_parameters: "CardanoPoolParametersType | None" = None,
             script_hash: "bytes | None" = None,
+            key_hash: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -1536,6 +1550,7 @@ if TYPE_CHECKING:
         path: "list[int]"
         amount: "int"
         script_hash: "bytes | None"
+        key_hash: "bytes | None"
 
         def __init__(
             self,
@@ -1543,6 +1558,7 @@ if TYPE_CHECKING:
             amount: "int",
             path: "list[int] | None" = None,
             script_hash: "bytes | None" = None,
+            key_hash: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -1598,6 +1614,38 @@ if TYPE_CHECKING:
 
         @classmethod
         def is_type_of(cls, msg: protobuf.MessageType) -> TypeGuard["CardanoTxMint"]:
+            return isinstance(msg, cls)
+
+    class CardanoTxCollateralInput(protobuf.MessageType):
+        prev_hash: "bytes"
+        prev_index: "int"
+
+        def __init__(
+            self,
+            *,
+            prev_hash: "bytes",
+            prev_index: "int",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: protobuf.MessageType) -> TypeGuard["CardanoTxCollateralInput"]:
+            return isinstance(msg, cls)
+
+    class CardanoTxRequiredSigner(protobuf.MessageType):
+        key_hash: "bytes | None"
+        key_path: "list[int]"
+
+        def __init__(
+            self,
+            *,
+            key_path: "list[int] | None" = None,
+            key_hash: "bytes | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: protobuf.MessageType) -> TypeGuard["CardanoTxRequiredSigner"]:
             return isinstance(msg, cls)
 
     class CardanoTxItemAck(protobuf.MessageType):

@@ -3,15 +3,16 @@ use crate::{
     ui::{
         component::{Child, Component, ComponentExt, Event, EventCtx, Pad},
         geometry::Rect,
+        model_tt::component::DialogLayout,
     },
 };
 
-use super::{theme, Button, ButtonMsg, DialogLayout, Loader, LoaderMsg};
+use super::{theme, Button, ButtonMsg, Loader, LoaderMsg};
 
 pub enum HoldToConfirmMsg<T> {
     Content(T),
-    Cancelled,
     Confirmed,
+    Cancelled,
 }
 
 pub struct HoldToConfirm<T> {
@@ -26,15 +27,18 @@ impl<T> HoldToConfirm<T>
 where
     T: Component,
 {
-    pub fn new(area: Rect, content: impl FnOnce(Rect) -> T) -> Self {
-        let layout = DialogLayout::middle(area);
+    pub fn new(content: T) -> Self {
         Self {
             loader: Loader::new(0),
-            content: content(layout.content).into_child(),
-            cancel: Button::with_text(layout.left, "Cancel").into_child(),
-            confirm: Button::with_text(layout.right, "Hold").into_child(),
-            pad: Pad::with_background(layout.content, theme::BG),
+            content: Child::new(content),
+            cancel: Child::new(Button::with_text("Cancel")),
+            confirm: Child::new(Button::with_text("Hold")),
+            pad: Pad::with_background(theme::BG),
         }
+    }
+
+    pub fn inner(&self) -> &T {
+        self.content.inner()
     }
 }
 
@@ -43,6 +47,15 @@ where
     T: Component,
 {
     type Msg = HoldToConfirmMsg<T::Msg>;
+
+    fn place(&mut self, bounds: Rect) -> Rect {
+        let layout = DialogLayout::middle(bounds);
+        self.loader.place(layout.content);
+        self.content.place(layout.content);
+        self.cancel.place(layout.left);
+        self.confirm.place(layout.right);
+        bounds
+    }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
         let now = Instant::now();

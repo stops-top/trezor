@@ -19,8 +19,8 @@ let
     sha256 = "02s3qkb6kz3ndyx7rfndjbvp4vlwiqc42fxypn3g6jnc0v5jyz95";
   }) { };
   moneroTests = nixpkgs.fetchurl {
-    url = "https://github.com/ph4r05/monero/releases/download/v0.17.1.9-tests/trezor_tests";
-    sha256 = "410bc4ff2ff1edc65e17f15b549bd1bf8a3776cf67abdea86aed52cf4bce8d9d";
+    url = "https://github.com/ph4r05/monero/releases/download/v0.17.3.0-dev-tests/trezor_tests";
+    sha256 = "sha256-tTQTe/Yk6oURq7GDOEotJ7Y2UpCgyuU5odjEHNTMrmE=";
   };
   moneroTestsPatched = nixpkgs.runCommandCC "monero_trezor_tests" {} ''
     cp ${moneroTests} $out
@@ -28,7 +28,9 @@ let
     ${nixpkgs.patchelf}/bin/patchelf --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" "$out"
     chmod -w $out
   '';
-  rustStable = nixpkgs.rust-bin.stable."1.58.1".minimal.override {
+  # NOTE: don't forget to update Minimum Supported Rust Version in docs/core/build/emulator.md
+  rustProfiles = nixpkgs.rust-bin.stable."1.58.1";
+  rustStable = rustProfiles.minimal.override {
     targets = [
       "thumbv7em-none-eabihf" # TT
       "thumbv7m-none-eabi"    # T1
@@ -70,6 +72,7 @@ stdenvNoCC.mkDerivation ({
     SDL2
     SDL2_image
     autoflake
+    autoPatchelfHook
     bash
     check
     curl  # for connect tests
@@ -115,6 +118,7 @@ stdenvNoCC.mkDerivation ({
     dejavu_fonts
   ];
   LD_LIBRARY_PATH = "${libffi}/lib:${libjpeg.out}/lib:${libusb1}/lib:${libressl.out}/lib";
+  DYLD_LIBRARY_PATH = "${libffi}/lib:${libjpeg.out}/lib:${libusb1}/lib:${libressl.out}/lib";
   NIX_ENFORCE_PURITY = 0;
 
   # Fix bdist-wheel problem by setting source date epoch to a more recent date
@@ -126,6 +130,9 @@ stdenvNoCC.mkDerivation ({
   # don't try to use stack protector for Apple Silicon (emulator) binaries
   # it's broken at the moment
   hardeningDisable = lib.optionals (stdenv.isDarwin && stdenv.isAarch64) [ "stackprotector" ];
+
+  # Enabling rust-analyzer extension in VSCode
+  RUST_SRC_PATH = "${rustProfiles.rust-src}/lib/rustlib/src/rust/library";
 
 } // (lib.optionalAttrs fullDeps) {
   TREZOR_MONERO_TESTS_PATH = moneroTestsPatched;

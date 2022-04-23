@@ -15,6 +15,7 @@ from ..common import (
     bip340_sign,
     ecdsa_sign,
     input_is_external,
+    input_is_external_unverified,
     input_is_segwit,
 )
 from ..ownership import verify_nonownership
@@ -205,8 +206,10 @@ class Bitcoin:
                 progress.advance()
                 txi = await helpers.request_tx_input(self.tx_req, i, self.coin)
                 writers.write_tx_input_check(h_check, txi)
-                assert txi.script_pubkey is not None  # checked in sanitize_tx_input
-                await self.verify_external_input(i, txi, txi.script_pubkey)
+                if not input_is_external_unverified(txi):
+                    assert txi.script_pubkey is not None  # checked in sanitize_tx_input
+                    await self.verify_external_input(i, txi, txi.script_pubkey)
+
             progress.advance(self.tx_info.tx.inputs_count - len(self.external))
         else:
             # There are internal non-Taproot inputs. We need to verify all inputs, because we can't
@@ -229,7 +232,10 @@ class Bitcoin:
                 if prev_amount != txi.amount:
                     raise wire.DataError("Invalid amount specified")
 
-                if i in self.external:
+                if script_pubkey != self.input_derive_script(txi):
+                    raise wire.DataError("Input does not match scriptPubKey")
+
+                if i in self.external and not input_is_external_unverified(txi):
                     await self.verify_external_input(i, txi, script_pubkey)
 
         # check that the inputs were the same as those streamed for approval
@@ -578,7 +584,7 @@ class Bitcoin:
         # STAGE_REQUEST_SEGWIT_WITNESS in legacy
         txi = await helpers.request_tx_input(self.tx_req, i, self.coin)
         self.tx_info.check_input(txi)
-        await self.approver.check_internal_input(txi)
+        self.approver.check_internal_input(txi)
         if txi.script_type not in common.SEGWIT_INPUT_SCRIPT_TYPES:
             raise wire.ProcessError("Transaction has changed during signing")
 

@@ -318,3 +318,13 @@ def create_array_header(size: int) -> bytes:
 
 def create_map_header(size: int) -> bytes:
     return _header(_CBOR_MAP, size)
+
+
+def precedes(prev: bytes, curr: bytes) -> bool:
+    """
+    Returns True if `prev` is smaller than `curr` with regards to
+    the cbor map key ordering as defined in
+    https://datatracker.ietf.org/doc/html/rfc7049#section-3.9
+    Note that `prev` and `curr` must already be cbor-encoded.
+    """
+    return len(prev) < len(curr) or (len(prev) == len(curr) and prev < curr)

@@ -31,7 +31,6 @@ from ...components.tt.text import LINE_WIDTH_PAGINATED, Span, Text
 from ...constants.tt import (
     MONO_ADDR_PER_LINE,
     MONO_HEX_PER_LINE,
-    QR_SIZE_THRESHOLD,
     QR_X,
     QR_Y,
     TEXT_MAX_LINES,
@@ -228,11 +227,11 @@ async def confirm_path_warning(
 
 def _show_qr(
     address: str,
+    case_sensitive: bool,
     title: str,
     cancel: str = "Address",
 ) -> Confirm:
-    QR_COEF = const(4) if len(address) < QR_SIZE_THRESHOLD else const(3)
-    qr = Qr(address, QR_X, QR_Y, QR_COEF)
+    qr = Qr(address, case_sensitive, QR_X, QR_Y)
     text = Text(title, ui.ICON_RECEIVE, ui.GREEN)
 
     return Confirm(Container(qr, text), cancel=cancel, cancel_style=ButtonDefault)
@@ -315,7 +314,9 @@ async def show_xpub(
 async def show_address(
     ctx: wire.GenericContext,
     address: str,
+    *,
     address_qr: str | None = None,
+    case_sensitive: bool = True,
     title: str = "Confirm address",
     network: str | None = None,
     multisig_index: int | None = None,
@@ -344,6 +345,7 @@ async def show_address(
                 ctx,
                 _show_qr(
                     address if address_qr is None else address_qr,
+                    case_sensitive,
                     title if title_qr is None else title_qr,
                     cancel="XPUBs" if is_multisig else "Address",
                 ),
@@ -986,14 +988,17 @@ async def confirm_modify_fee(
 
 
 async def confirm_coinjoin(
-    ctx: wire.GenericContext, fee_per_anonymity: str | None, total_fee: str
+    ctx: wire.GenericContext, coin_name: str, max_rounds: int, max_fee_per_vbyte: str
 ) -> None:
     text = Text("Authorize CoinJoin", ui.ICON_RECOVERY, new_lines=False)
-    if fee_per_anonymity is not None:
-        text.normal("Fee per anonymity set:\n")
-        text.bold(f"{fee_per_anonymity} %\n")
-    text.normal("Maximum total fees:\n")
-    text.bold(total_fee)
+    text.normal("Coin name: ")
+    text.bold(f"{coin_name}\n")
+    text.br_half()
+    text.normal("Maximum rounds: ")
+    text.bold(f"{max_rounds}\n")
+    text.br_half()
+    text.normal("Maximum mining fee:\n")
+    text.bold(f"{max_fee_per_vbyte} sats/vbyte")
     await raise_if_cancelled(
         interact(ctx, HoldToConfirm(text), "coinjoin_final", ButtonRequestType.Other)
     )

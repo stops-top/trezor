@@ -14,7 +14,7 @@ use crate::{
     },
     time::Duration,
     ui::{
-        component::{Child, Component, Event, EventCtx, Never, PageMsg, TimerToken},
+        component::{Child, Component, Event, EventCtx, Never, TimerToken},
         geometry::Rect,
     },
     util,
@@ -26,6 +26,11 @@ use crate::ui::model_tt::event::TouchEvent;
 #[cfg(feature = "model_t1")]
 use crate::ui::model_t1::event::ButtonEvent;
 
+#[cfg(not(feature = "model_tt"))]
+use crate::ui::model_t1::constant;
+#[cfg(feature = "model_tt")]
+use crate::ui::model_tt::constant;
+
 /// Conversion trait implemented by components that know how to convert their
 /// message values into MicroPython `Obj`s. We can automatically implement
 /// `ComponentMsgObj` for components whose message types implement `TryInto`.
@@ -33,13 +38,12 @@ pub trait ComponentMsgObj: Component {
     fn msg_try_into_obj(&self, msg: Self::Msg) -> Result<Obj, Error>;
 }
 
-impl<T> ComponentMsgObj for T
+impl<T> ComponentMsgObj for Child<T>
 where
-    T: Component,
-    T::Msg: TryInto<Obj, Error = Error>,
+    T: ComponentMsgObj,
 {
     fn msg_try_into_obj(&self, msg: Self::Msg) -> Result<Obj, Error> {
-        msg.try_into()
+        self.inner().msg_try_into_obj(msg)
     }
 }
 
@@ -69,6 +73,7 @@ use maybe_trace::MaybeTrace;
 /// T>` field. `Component` itself is not object-safe because of `Component::Msg`
 /// associated type.
 pub trait ObjComponent: MaybeTrace {
+    fn obj_place(&mut self, bounds: Rect) -> Rect;
     fn obj_event(&mut self, ctx: &mut EventCtx, event: Event) -> Result<Obj, Error>;
     fn obj_paint(&mut self);
     fn obj_bounds(&self, sink: &mut dyn FnMut(Rect));
@@ -78,6 +83,10 @@ impl<T> ObjComponent for Child<T>
 where
     T: ComponentMsgObj + MaybeTrace,
 {
+    fn obj_place(&mut self, bounds: Rect) -> Rect {
+        self.place(bounds)
+    }
+
     fn obj_event(&mut self, ctx: &mut EventCtx, event: Event) -> Result<Obj, Error> {
         if let Some(msg) = self.event(ctx, event) {
             self.inner().msg_try_into_obj(msg)
@@ -143,6 +152,12 @@ impl LayoutObj {
     fn obj_event(&self, event: Event) -> Result<Obj, Error> {
         let inner = &mut *self.inner.borrow_mut();
 
+        // Place the root component on the screen in case it was previously requested.
+        if inner.event_ctx.needs_place_before_next_event_or_paint() {
+            // SAFETY: `inner.root` is unique because of the `inner.borrow_mut()`.
+            unsafe { Gc::as_mut(&mut inner.root) }.obj_place(constant::screen());
+        }
+
         // Clear the leftover flags from the previous event pass.
         inner.event_ctx.clear();
 
@@ -170,6 +185,13 @@ impl LayoutObj {
     /// Run a paint pass over the component tree.
     fn obj_paint_if_requested(&self) {
         let mut inner = self.inner.borrow_mut();
+
+        // Place the root component on the screen in case it was previously requested.
+        if inner.event_ctx.needs_place_before_next_event_or_paint() {
+            // SAFETY: `inner.root` is unique because of the `inner.borrow_mut()`.
+            unsafe { Gc::as_mut(&mut inner.root) }.obj_place(constant::screen());
+        }
+
         // SAFETY: `inner.root` is unique because of the `inner.borrow_mut()`.
         unsafe { Gc::as_mut(&mut inner.root) }.obj_paint();
     }
@@ -198,24 +220,30 @@ impl LayoutObj {
 
             fn symbol(&mut self, name: &str) {
                 self.0
-                    .call_with_n_args(&[name.try_into().unwrap()])
+                    .call_with_n_args(&[
+                        "<".try_into().unwrap(),
+                        name.try_into().unwrap(),
+                        ">".try_into().unwrap(),
+                    ])
                     .unwrap();
             }
 
             fn open(&mut self, name: &str) {
                 self.0
-                    .call_with_n_args(&[name.try_into().unwrap()])
+                    .call_with_n_args(&["<".try_into().unwrap(), name.try_into().unwrap()])
                     .unwrap();
             }
 
             fn field(&mut self, name: &str, value: &dyn Trace) {
                 self.0
-                    .call_with_n_args(&[name.try_into().unwrap()])
+                    .call_with_n_args(&[name.try_into().unwrap(), ": ".try_into().unwrap()])
                     .unwrap();
                 value.trace(self);
             }
 
-            fn close(&mut self) {}
+            fn close(&mut self) {
+                self.0.call_with_n_args(&[">".try_into().unwrap()]).unwrap();
+            }
         }
 
         self.inner
@@ -236,7 +264,8 @@ impl LayoutObj {
             display::rect_stroke(r, color)
         }
 
-        wireframe(display::screen());
+        // use crate::ui::model_tt::theme;
+        // wireframe(theme::borders());
         self.inner.borrow().root.obj_bounds(&mut wireframe);
     }
 
@@ -306,17 +335,6 @@ impl TryFrom<Duration> for Obj {
     fn try_from(value: Duration) -> Result<Self, Self::Error> {
         let millis: usize = value.to_millis().try_into()?;
         millis.try_into()
-    }
-}
-
-impl<T> TryFrom<PageMsg<T, bool>> for Obj {
-    type Error = Error;
-
-    fn try_from(val: PageMsg<T, bool>) -> Result<Self, Self::Error> {
-        match val {
-            PageMsg::Content(_) => Err(Error::TypeError),
-            PageMsg::Controls(c) => Ok(c.into()),
-        }
     }
 }
 

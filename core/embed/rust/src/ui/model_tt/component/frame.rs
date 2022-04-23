@@ -1,6 +1,6 @@
 use super::theme;
 use crate::ui::{
-    component::{Child, Component, ComponentExt, Event, EventCtx},
+    component::{Child, Component, Event, EventCtx},
     display,
     geometry::{Insets, Rect},
 };
@@ -14,35 +14,42 @@ pub struct Frame<T, U> {
 impl<T, U> Frame<T, U>
 where
     T: Component,
-    U: AsRef<[u8]>,
+    U: AsRef<str>,
 {
-    pub fn new(area: Rect, title: U, content: impl FnOnce(Rect) -> T) -> Self {
-        let (title_area, content_area) = Self::areas(area);
+    pub fn new(title: U, content: T) -> Self {
         Self {
-            area: title_area,
             title,
-            content: content(content_area).into_child(),
+            area: Rect::zero(),
+            content: Child::new(content),
         }
     }
 
-    fn areas(area: Rect) -> (Rect, Rect) {
-        // Same as PageLayout::BUTTON_SPACE.
-        const TITLE_SPACE: i32 = 6;
-
-        let (title_area, content_area) = area.split_top(theme::FONT_BOLD.text_height());
-        let title_area = title_area.inset(Insets::left(theme::CONTENT_BORDER));
-        let content_area = content_area.inset(Insets::top(TITLE_SPACE));
-
-        (title_area, content_area)
+    pub fn inner(&self) -> &T {
+        &self.content.inner()
     }
 }
 
 impl<T, U> Component for Frame<T, U>
 where
     T: Component,
-    U: AsRef<[u8]>,
+    U: AsRef<str>,
 {
     type Msg = T::Msg;
+
+    fn place(&mut self, bounds: Rect) -> Rect {
+        // Same as PageLayout::BUTTON_SPACE.
+        const TITLE_SPACE: i32 = 6;
+
+        let (title_area, content_area) = bounds
+            .inset(theme::borders_scroll())
+            .split_top(theme::FONT_BOLD.text_height());
+        let title_area = title_area.inset(Insets::left(theme::CONTENT_BORDER));
+        let content_area = content_area.inset(Insets::top(TITLE_SPACE));
+
+        self.area = title_area;
+        self.content.place(content_area);
+        bounds
+    }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
         self.content.event(ctx, event)
@@ -69,7 +76,7 @@ where
 impl<T, U> crate::trace::Trace for Frame<T, U>
 where
     T: crate::trace::Trace,
-    U: crate::trace::Trace + AsRef<[u8]>,
+    U: crate::trace::Trace + AsRef<str>,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.open("Frame");

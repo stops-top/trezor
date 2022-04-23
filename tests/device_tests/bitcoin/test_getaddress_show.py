@@ -41,16 +41,24 @@ VECTORS = (  # path, script_type, address
 
 @pytest.mark.parametrize("path, script_type, address", VECTORS)
 def test_show(client: Client, path, script_type, address):
-    assert (
-        btc.get_address(
-            client,
-            "Bitcoin",
-            tools.parse_path(path),
-            script_type=script_type,
-            show_display=True,
+    def input_flow():
+        yield
+        client.debug.press_no()
+        yield
+        client.debug.press_yes()
+
+    with client:
+        client.set_input_flow(input_flow)
+        assert (
+            btc.get_address(
+                client,
+                "Bitcoin",
+                tools.parse_path(path),
+                script_type=script_type,
+                show_display=True,
+            )
+            == address
         )
-        == address
-    )
 
 
 def test_show_unrecognized_path(client: Client):
@@ -163,6 +171,8 @@ VECTORS_MULTISIG = (  # script_type, bip48_type, address, xpubs, ignore_xpub_mag
 )
 
 
+# NOTE: contains wait_layout race that manifests on hw sometimes
+@pytest.mark.flaky(max_runs=5)
 @pytest.mark.skip_t1
 @pytest.mark.multisig
 @pytest.mark.parametrize(

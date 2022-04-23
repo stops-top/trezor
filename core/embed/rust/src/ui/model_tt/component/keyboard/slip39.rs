@@ -11,7 +11,7 @@ use crate::{
         model_tt::{
             component::{
                 keyboard::{
-                    common::{MultiTapKeyboard, TextBox, TextEdit},
+                    common::{paint_pending_marker, MultiTapKeyboard, TextBox, TextEdit},
                     mnemonic::{MnemonicInput, MnemonicInputMsg, MNEMONIC_KEY_COUNT},
                 },
                 Button, ButtonContent, ButtonMsg,
@@ -25,7 +25,7 @@ use crate::{
 const MAX_LENGTH: usize = 8;
 
 pub struct Slip39Input {
-    button: Button<&'static [u8]>,
+    button: Button<&'static str>,
     textbox: TextBox<MAX_LENGTH>,
     multi_tap: MultiTapKeyboard,
     final_word: Option<&'static str>,
@@ -33,20 +33,10 @@ pub struct Slip39Input {
 }
 
 impl MnemonicInput for Slip39Input {
-    fn new(area: Rect) -> Self {
-        Self {
-            button: Button::empty(area),
-            textbox: TextBox::empty(),
-            multi_tap: MultiTapKeyboard::new(),
-            final_word: None,
-            input_mask: Slip39Mask::full(),
-        }
-    }
-
     /// Return the key set. Keys are further specified as indices into this
     /// array.
     fn keys() -> [&'static str; MNEMONIC_KEY_COUNT] {
-        ["ab", "cd", "ef", "ghij", "klm", "nopq", "rs", "tuv", "xyz"]
+        ["ab", "cd", "ef", "ghij", "klm", "nopq", "rs", "tuv", "wxyz"]
     }
 
     /// Returns `true` if given key index can continue towards a valid mnemonic
@@ -74,6 +64,8 @@ impl MnemonicInput for Slip39Input {
             // Ignore the pending char rotation. We use the pending key to paint
             // the last character, but the mnemonic word computation depends
             // only on the pressed key, not on the specific character inside it.
+            // Request paint of pending char.
+            ctx.request_paint();
         }
         self.complete_word_from_dictionary(ctx);
     }
@@ -89,10 +81,18 @@ impl MnemonicInput for Slip39Input {
     fn is_empty(&self) -> bool {
         self.textbox.is_empty()
     }
+
+    fn mnemonic(&self) -> Option<&'static str> {
+        self.final_word
+    }
 }
 
 impl Component for Slip39Input {
     type Msg = MnemonicInputMsg;
+
+    fn place(&mut self, bounds: Rect) -> Rect {
+        self.button.place(bounds)
+    }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
         if self.multi_tap.is_timeout_event(event) {
@@ -139,8 +139,9 @@ impl Component for Slip39Input {
             if let (Some(key), Some(press)) =
                 (self.multi_tap.pending_key(), self.multi_tap.pending_press())
             {
-                let ascii_text = Self::keys()[key].as_bytes();
-                let ch = ascii_text[press % ascii_text.len()] as char;
+                assert!(!Self::keys()[key].is_empty());
+                // Now we can be sure that the looped iterator will return a value.
+                let ch = Self::keys()[key].chars().cycle().nth(press).unwrap();
                 text.pop();
                 text.push(ch)
                     .assert_if_debugging_ui("Text buffer is too small");
@@ -148,25 +149,15 @@ impl Component for Slip39Input {
         }
         display::text(
             text_baseline,
-            text.as_bytes(),
+            text.as_str(),
             style.font,
             style.text_color,
             style.button_color,
         );
-        let width = style.font.text_width(text.as_bytes());
 
         // Paint the pending marker.
         if self.multi_tap.pending_key().is_some() && self.final_word.is_none() {
-            // Measure the width of the last character of input.
-            if let Some(last) = text.as_bytes().last().copied() {
-                let last_width = style.font.text_width(&[last]);
-                // Draw the marker 2px under the start of the baseline of the last character.
-                let marker_origin = text_baseline + Offset::new(width - last_width, 2);
-                // Draw the marker 1px longer than the last character, and 3px thick.
-                let marker_rect =
-                    Rect::from_top_left_and_size(marker_origin, Offset::new(last_width + 1, 3));
-                display::rect_fill(marker_rect, style.text_color);
-            }
+            paint_pending_marker(text_baseline, text.as_str(), style.font, style.text_color);
         }
 
         // Paint the icon.
@@ -177,9 +168,23 @@ impl Component for Slip39Input {
             display::icon(icon_center, icon, style.text_color, style.button_color);
         }
     }
+
+    fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
+        self.button.bounds(sink);
+    }
 }
 
 impl Slip39Input {
+    pub fn new() -> Self {
+        Self {
+            button: Button::empty(),
+            textbox: TextBox::empty(),
+            multi_tap: MultiTapKeyboard::new(),
+            final_word: None,
+            input_mask: Slip39Mask::full(),
+        }
+    }
+
     /// Convert a key index into the key digit. This is what we push into the
     /// input buffer.
     ///
@@ -196,11 +201,15 @@ impl Slip39Input {
 
     fn complete_word_from_dictionary(&mut self, ctx: &mut EventCtx) {
         let sequence = self.input_sequence();
-        self.final_word = sequence.and_then(slip39::button_sequence_to_word);
         self.input_mask = sequence
             .and_then(slip39::word_completion_mask)
             .map(Slip39Mask)
             .unwrap_or_else(Slip39Mask::full);
+        self.final_word = if self.input_mask.is_final() {
+            sequence.and_then(slip39::button_sequence_to_word)
+        } else {
+            None
+        };
 
         // Change the style of the button depending on the input.
         if self.final_word.is_some() {
@@ -213,7 +222,7 @@ impl Slip39Input {
             // Disabled button.
             self.button.disable(ctx);
             self.button.set_stylesheet(ctx, theme::button_default());
-            self.button.set_content(ctx, ButtonContent::Text(b""));
+            self.button.set_content(ctx, ButtonContent::Text(""));
         }
     }
 
