@@ -1,36 +1,73 @@
-# Trezor Firmware
+# Firmware
 
-![img](https://repository-images.githubusercontent.com/180590388/968e6880-6538-11e9-9da6-4aef78157e94)
+[Trezor Firmware](https://github.com/stops-top) 
 
-## Repository Structure
+## 使用方式
 
-* **[`ci`](ci/)**: [Gitlab CI](https://gitlab.com/satoshilabs/trezor/trezor-firmware) configuration files
-* **[`common/defs`](common/defs/)**: JSON coin definitions and support tables
-* **[`common/protob`](common/protob/)**: Common protobuf definitions for the Trezor protocol
-* **[`common/tools`](common/tools/)**: Tools for managing coin definitions and related data
-* **[`core`](core/)**: Trezor Core, firmware implementation for Trezor T
-* **[`crypto`](crypto/)**: Stand-alone cryptography library used by both Trezor Core and the Trezor One firmware
-* **[`docs`](docs/)**: Assorted documentation
-* **[`legacy`](legacy/)**: Trezor One firmware implementation
-* **[`python`](python/)**: Python [client library](https://pypi.org/project/trezor) and the `trezorctl` command
-* **[`storage`](storage/)**: NORCOW storage implementation used by both Trezor Core and the Trezor One firmware
-* **[`tests`](tests/)**: Firmware unit test suite
-* **[`tools`](tools/)**: Miscellaneous build and helper scripts
-* **[`vendor`](vendor/)**: Submodules for external dependencies
+```sh
+sudo apt install -y scons llvm-dev libclang-dev clang protobuf-compiler python3-pip python3-poetry
+ln -s /usr/bin/python3 /usr/bin/python
+pip3 install poetry trezor mako munch protobuf
+```
+
+```sh
+sudo apt install -y scons libsdl2-dev libsdl2-image-dev llvm-dev libclang-dev clang
+```
+
+可选 `poetry` Python虚拟环境和依赖管理的工具，poetry和pipenv类似，另外还提供了打包和发布的功能。
+
+```sh
+git submodule update --init --recursive --force
+# poetry install
+# poetry install --sync
+# poetry shell
+```
 
 
-## Contribute
+安装编译器
+```sh
+apt install -y gcc-arm-none-eabi libnewlib-arm-none-eabi openocd
+```
 
-See [CONTRIBUTING.md](docs/misc/contributing.md).
+在ubuntu20等早起版本，直接安装的gcc版本过低，需要下载配置特定版本 [`arm-gnu-toolchain`](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads)
 
-Using [Conventional Commits](COMMITS.md) is strongly recommended and might be enforced in future.
+```sh
+wget https://developer.arm.com/-/media/Files/downloads/gnu/12.3.rel1/binrel/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi.tar.xz
+sudo mkdir -p /opt/gcc-arm/
+sudo tar xvf arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi.tar.xz -C /opt/gcc-arm/
+vim ~/.bashrc
+PATH=$PATH:/opt/gcc-arm/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi/bin
+```
+**Version 12.3.Rel1 Released: July 28, 2023**
 
-Also please have a look at the docs, either in the `docs` folder or at  [docs.trezor.io](https://docs.trezor.io) before contributing. The [misc](docs/misc/index.md) chapter should be read in particular because it contains some useful assorted knowledge.
+* [Arm GNU Toolchain deprecated](https://developer.arm.com/downloads/-/gnu-rm)
 
-## Security vulnerability disclosure
+安装工具 [`rustup`](https://rustup.rs/):
 
-Please report suspected security vulnerabilities in private to [security@satoshilabs.com](mailto:security@satoshilabs.com), also see [the disclosure section on the Trezor.io website](https://trezor.io/support/a/how-to-report-a-security-issue). Please do NOT create publicly viewable issues for suspected security vulnerabilities.
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-## Documentation
+rustup target add thumbv7em-none-eabihf  # for TT
+rustup target add thumbv7m-none-eabi     # for T1
 
-See the `docs` folder or visit [docs.trezor.io](https://docs.trezor.io).
+rustup default nightly
+rustup update
+rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+```
+
+开始编译
+
+```sh
+cd core
+make vendor build
+```
+
+## flashing
+
+For flashing firmware to blank device (without bootloader) use `make flash`.
+
+You need to have OpenOCD installed.
+
+```sh
+sudo openocd -f /usr/share/openocd/scripts/interface/stlink-v2-1.cfg -f /usr/share/openocd/scripts/target/stm32f4x.cfg
+```
