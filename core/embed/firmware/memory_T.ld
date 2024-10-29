@@ -3,10 +3,11 @@
 ENTRY(reset_handler)
 
 MEMORY {
-  FLASH  (rx)  : ORIGIN = 0x08040000, LENGTH = 768K
-  FLASH2 (r)   : ORIGIN = 0x08120000, LENGTH = 896K
-  CCMRAM (wal) : ORIGIN = 0x10000000, LENGTH = 64K
-  SRAM   (wal) : ORIGIN = 0x20000000, LENGTH = 192K
+  FLASH  (rx)     : ORIGIN = 0x08040000, LENGTH = 768K
+  FLASH2 (r)      : ORIGIN = 0x08120000, LENGTH = 896K
+  CCMRAM (wal)    : ORIGIN = 0x10000000, LENGTH = 64K - 0x100
+  BOOT_ARGS (wal) : ORIGIN = 0x1000FF00, LENGTH = 0x100
+  SRAM   (wal)    : ORIGIN = 0x20000000, LENGTH = 192K
 }
 
 main_stack_base = ORIGIN(SRAM) + SIZEOF(.stack); /* 8-byte aligned full descending stack */
@@ -21,6 +22,10 @@ data_size = SIZEOF(.data);
 /* used by the startup code to wipe memory */
 ccmram_start = ORIGIN(CCMRAM);
 ccmram_end = ORIGIN(CCMRAM) + LENGTH(CCMRAM);
+
+/* reserve 256 bytes for bootloader arguments */
+boot_args_start = ORIGIN(BOOT_ARGS);
+boot_args_end = ORIGIN(BOOT_ARGS) + LENGTH(BOOT_ARGS);
 
 /* used by the startup code to wipe memory */
 sram_start = ORIGIN(SRAM);
@@ -82,6 +87,11 @@ SECTIONS {
     . = ALIGN(4);
   } >SRAM
 
+  .buf : ALIGN(4) {
+    *(.buf*);
+    . = ALIGN(4);
+  } >SRAM
+
   .heap : ALIGN(4) {
     . = 37K; /* this acts as a build time assertion that at least this much memory is available for heap use */
     . = ABSOLUTE(sram_end); /* this explicitly sets the end of the heap */
@@ -91,4 +101,9 @@ SECTIONS {
     *(.no_dma_buffers*);
     . = ALIGN(4);
   } >CCMRAM
+
+  .boot_args : ALIGN(8) {
+    *(.boot_args*);
+    . = ALIGN(8);
+  } >BOOT_ARGS
 }

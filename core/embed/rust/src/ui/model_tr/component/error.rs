@@ -1,8 +1,14 @@
-use crate::ui::{
-    component::{Child, Component, Event, EventCtx, Label, Never, Pad},
-    constant::{screen, WIDTH},
-    display,
-    geometry::{Alignment2D, Offset, Point, Rect},
+use crate::{
+    strutil::TString,
+    ui::{
+        component::{Child, Component, Event, EventCtx, Label, Never, Pad},
+        constant::{screen, WIDTH},
+        display,
+        geometry::{Alignment2D, Offset, Point, Rect},
+        model_tr::cshape,
+        shape,
+        shape::Renderer,
+    },
 };
 
 use super::super::{
@@ -13,17 +19,17 @@ use super::super::{
 const FOOTER_AREA_HEIGHT: i16 = 20;
 const DIVIDER_POSITION: i16 = 43;
 
-pub struct ErrorScreen<T> {
+pub struct ErrorScreen<'a> {
     bg: Pad,
     show_icons: bool,
-    title: Child<Label<T>>,
-    message: Child<Label<T>>,
-    footer: Child<Label<T>>,
+    title: Child<Label<'a>>,
+    message: Child<Label<'a>>,
+    footer: Child<Label<'a>>,
     area: Rect,
 }
 
-impl<T: AsRef<str>> ErrorScreen<T> {
-    pub fn new(title: T, message: T, footer: T) -> Self {
+impl<'a> ErrorScreen<'a> {
+    pub fn new(title: TString<'a>, message: TString<'a>, footer: TString<'a>) -> Self {
         let title = Label::centered(title, theme::TEXT_BOLD);
         let message = Label::centered(message, theme::TEXT_NORMAL).vertically_centered();
         let footer = Label::centered(footer, theme::TEXT_NORMAL).vertically_centered();
@@ -39,7 +45,7 @@ impl<T: AsRef<str>> ErrorScreen<T> {
     }
 }
 
-impl<T: AsRef<str>> Component for ErrorScreen<T> {
+impl Component for ErrorScreen<'_> {
     type Msg = Never;
 
     fn place(&mut self, bounds: Rect) -> Rect {
@@ -94,5 +100,30 @@ impl<T: AsRef<str>> Component for ErrorScreen<T> {
         display::dotted_line(Point::new(0, DIVIDER_POSITION), WIDTH, FG, 3);
 
         self.footer.paint();
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.bg.render(target);
+
+        if self.show_icons {
+            shape::ToifImage::new(screen().top_left(), theme::ICON_WARN_TITLE.toif)
+                .with_align(Alignment2D::TOP_LEFT)
+                .with_fg(FG)
+                .render(target);
+
+            shape::ToifImage::new(screen().top_right(), theme::ICON_WARN_TITLE.toif)
+                .with_align(Alignment2D::TOP_RIGHT)
+                .with_fg(FG)
+                .render(target);
+        }
+        self.title.render(target);
+        self.message.render(target);
+
+        cshape::HorizontalLine::new(Point::new(0, DIVIDER_POSITION), WIDTH)
+            .with_step(3)
+            .with_color(FG)
+            .render(target);
+
+        self.footer.render(target);
     }
 }

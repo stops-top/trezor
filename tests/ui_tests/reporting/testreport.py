@@ -7,7 +7,22 @@ from pathlib import Path
 
 import dominate
 import dominate.tags as t
-from dominate.tags import a, div, h1, h2, hr, i, p, span, strong, table, td, th, tr
+from dominate.tags import (
+    a,
+    div,
+    h1,
+    h2,
+    hr,
+    i,
+    p,
+    script,
+    span,
+    strong,
+    table,
+    td,
+    th,
+    tr,
+)
 from dominate.util import text
 
 from ..common import FixturesType, TestCase, TestResult
@@ -231,11 +246,16 @@ def differing_screens() -> None:
 
     model = recent_ui_failures[0].test.model if recent_ui_failures else None
     doc = document(title="Differing screens", model=model)
+    with doc.head:
+        script(
+            type="text/javascript", src="https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0"
+        )
     with doc:
         with table(border=1, width=600):
             with tr():
                 th("Expected")
                 th("Actual")
+                th("Diff")
                 th("Testcase (link)")
 
             for ui_failure in recent_ui_failures:
@@ -245,6 +265,7 @@ def differing_screens() -> None:
                         with tr(bgcolor="red"):
                             html.image_column(recorded, TESTREPORT_PATH)
                             html.image_column(actual, TESTREPORT_PATH)
+                            html.diff_column()
                             with td():
                                 with a(href=f"failed/{ui_failure.test.id}.html"):
                                     i(ui_failure.test.id)
@@ -270,7 +291,10 @@ def _get_current_results() -> FixturesType:
 def master_diff() -> None:
     """Creating an HTML page showing all screens differing from master."""
     current = _get_current_results()
-    _removed_tests, _added_tests, diff_tests = get_diff(current)
+    _removed_tests, added_tests, diff_tests = get_diff(current)
+    # Enriching the diff tests with the newly added ones (empty master hash)
+    for key, value in added_tests.items():
+        diff_tests[key] = ("", value)
     generate_master_diff_report(diff_tests, TESTREPORT_PATH)
 
 
@@ -335,7 +359,13 @@ def failed(result: TestResult) -> Path:
     doc = document(
         title=result.test.id, actual_hash=result.actual_hash, model=result.test.model
     )
+    with doc.head:
+        script(
+            type="text/javascript", src="https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0"
+        )
+
     with doc:
+
         _header(result.test.id, result.expected_hash, result.actual_hash)
 
         with div(id="markbox", _class="script-hidden"):
@@ -354,6 +384,7 @@ def failed(result: TestResult) -> Path:
             with tr():
                 th("Expected")
                 th("Actual")
+                th("Diff")
 
             html.diff_table(result.diff_lines(), TESTREPORT_PATH / "failed")
 

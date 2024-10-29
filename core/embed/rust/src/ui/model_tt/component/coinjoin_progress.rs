@@ -1,14 +1,19 @@
 use core::mem;
 
 use crate::{
+    error::Error,
     maybe_trace::MaybeTrace,
+    strutil::TString,
+    translations::TR,
     ui::{
         component::{
-            base::Never, painter, Child, Component, ComponentExt, Empty, Event, EventCtx, Label,
-            Split,
+            base::Never, Bar, Child, Component, ComponentExt, Empty, Event, EventCtx, Label, Split,
         },
+        constant,
         display::loader::{loader_circular_uncompress, LoaderDimensions},
-        geometry::{Insets, Rect},
+        geometry::{Insets, Offset, Rect},
+        shape,
+        shape::Renderer,
         util::animation_disabled,
     },
 };
@@ -22,57 +27,54 @@ const LOADER_INNER: i16 = 28;
 const LOADER_OFFSET: i16 = -34;
 const LOADER_SPEED: u16 = 5;
 
-pub struct CoinJoinProgress<T, U> {
+pub struct CoinJoinProgress<U> {
     value: u16,
     indeterminate: bool,
-    content: Child<Frame<Split<Empty, U>, &'static str>>,
+    content: Child<Frame<Split<Empty, U>>>,
     // Label is not a child since circular loader paints large black rectangle which overlaps it.
     // To work around this, draw label every time loader is drawn.
-    label: Label<T>,
+    label: Label<'static>,
 }
 
-impl<T, U> CoinJoinProgress<T, U>
-where
-    T: AsRef<str>,
-{
+impl<U> CoinJoinProgress<U> {
     pub fn new(
-        text: T,
+        text: TString<'static>,
         indeterminate: bool,
-    ) -> CoinJoinProgress<T, impl Component<Msg = Never> + MaybeTrace>
-    where
-        T: AsRef<str>,
-    {
+    ) -> Result<CoinJoinProgress<impl Component<Msg = Never> + MaybeTrace>, Error> {
         let style = theme::label_coinjoin_progress();
-        let label = Label::centered("DO NOT DISCONNECT YOUR TREZOR!", style).vertically_centered();
-        let bg = painter::rect_painter(style.background_color, theme::BG);
+        let label = Label::centered(TR::coinjoin__title_do_not_disconnect.into(), style)
+            .vertically_centered();
+        let bg = Bar::new(style.background_color, theme::BG, 2);
         let inner = (bg, label);
         CoinJoinProgress::with_background(text, inner, indeterminate)
     }
 }
 
-impl<T, U> CoinJoinProgress<T, U>
+impl<U> CoinJoinProgress<U>
 where
-    T: AsRef<str>,
     U: Component<Msg = Never>,
 {
-    pub fn with_background(text: T, inner: U, indeterminate: bool) -> Self {
-        Self {
+    pub fn with_background(
+        text: TString<'static>,
+        inner: U,
+        indeterminate: bool,
+    ) -> Result<Self, Error> {
+        Ok(Self {
             value: 0,
             indeterminate,
             content: Frame::centered(
                 theme::label_title(),
-                "COINJOIN IN PROGRESS",
+                TR::coinjoin__title_progress.into(),
                 Split::bottom(RECTANGLE_HEIGHT, 0, Empty, inner),
             )
             .into_child(),
             label: Label::centered(text, theme::TEXT_NORMAL),
-        }
+        })
     }
 }
 
-impl<T, U> Component for CoinJoinProgress<T, U>
+impl<U> Component for CoinJoinProgress<U>
 where
-    T: AsRef<str>,
     U: Component<Msg = Never>,
 {
     type Msg = Never;
@@ -91,7 +93,7 @@ where
             _ if animation_disabled() => {
                 return None;
             }
-            Event::Attach if self.indeterminate => {
+            Event::Attach(_) if self.indeterminate => {
                 ctx.request_anim_frame();
             }
             Event::Timer(EventCtx::ANIM_FRAME_TIMER) => {
@@ -122,12 +124,45 @@ where
         );
         self.label.paint();
     }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.content.render(target);
+
+        let center = constant::screen().center() + Offset::y(LOADER_OFFSET);
+        let active_color = theme::FG;
+        let background_color = theme::BG;
+        let inactive_color = background_color.blend(active_color, 85);
+
+        let start = (self.value as i16 - 100) % 1000;
+        let end = (self.value as i16 + 100) % 1000;
+        let start = 360.0 * start as f32 / 1000.0;
+        let end = 360.0 * end as f32 / 1000.0;
+
+        shape::Circle::new(center, LOADER_OUTER)
+            .with_bg(inactive_color)
+            .render(target);
+
+        shape::Circle::new(center, LOADER_OUTER)
+            .with_bg(active_color)
+            .with_start_angle(start)
+            .with_end_angle(end)
+            .render(target);
+
+        shape::Circle::new(center, LOADER_INNER + 2)
+            .with_bg(active_color)
+            .render(target);
+
+        shape::Circle::new(center, LOADER_INNER)
+            .with_bg(background_color)
+            .render(target);
+
+        self.label.render(target);
+    }
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T, U> crate::trace::Trace for CoinJoinProgress<T, U>
+impl<U> crate::trace::Trace for CoinJoinProgress<U>
 where
-    T: AsRef<str>,
     U: Component + crate::trace::Trace,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {

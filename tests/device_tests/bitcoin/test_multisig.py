@@ -16,12 +16,13 @@
 
 import pytest
 
-from trezorlib import btc, messages
+from trezorlib import btc, messages, models
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.exceptions import TrezorFailure
 from trezorlib.tools import parse_path
 
-from ...common import MNEMONIC12
+from ...common import MNEMONIC12, is_core
+from ...input_flows import InputFlowConfirmAllWarnings
 from ...tx_cache import TxCache
 from .signtx import (
     assert_tx_matches,
@@ -52,7 +53,8 @@ pytestmark = pytest.mark.multisig
 
 
 @pytest.mark.multisig
-def test_2_of_3(client: Client):
+@pytest.mark.parametrize("chunkify", (True, False))
+def test_2_of_3(client: Client, chunkify: bool):
     # input tx: 6b07c1321b52d9c85743f9695e13eb431b41708cdf4e1585258d51208e5b93fc
 
     nodes = [
@@ -82,12 +84,11 @@ def test_2_of_3(client: Client):
     )
 
     # Expected responses are the same for both two signings
-    tt = client.features.model == "T"
     expected_responses = [
         request_input(0),
         request_output(0),
         messages.ButtonRequest(code=B.ConfirmOutput),
-        (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+        (is_core(client), messages.ButtonRequest(code=B.ConfirmOutput)),
         messages.ButtonRequest(code=B.SignTx),
         request_input(0),
         request_meta(TXHASH_6b07c1),
@@ -104,7 +105,12 @@ def test_2_of_3(client: Client):
 
         # Now we have first signature
         signatures1, _ = btc.sign_tx(
-            client, "Testnet", [inp1], [out1], prev_txes=TX_API_TESTNET
+            client,
+            "Testnet",
+            [inp1],
+            [out1],
+            prev_txes=TX_API_TESTNET,
+            chunkify=chunkify,
         )
 
     assert (
@@ -233,7 +239,7 @@ def test_missing_pubkey(client: Client):
     with pytest.raises(TrezorFailure) as exc:
         btc.sign_tx(client, "Bitcoin", [inp1], [out1], prev_txes=TX_API)
 
-    if client.features.model == "1":
+    if client.model is models.T1B1:
         assert exc.value.message.endswith("Failed to derive scriptPubKey")
     else:
         assert exc.value.message.endswith("Pubkey not found in multisig script")
@@ -299,6 +305,9 @@ def test_attack_change_input(client: Client):
 
     # Transaction can be signed without the attack processor
     with client:
+        if is_core(client):
+            IF = InputFlowConfirmAllWarnings(client)
+            client.set_input_flow(IF.get())
         btc.sign_tx(
             client,
             "Testnet",

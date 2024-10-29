@@ -19,7 +19,7 @@
 
 #include <stdint.h>
 #include TREZOR_BOARD
-#include "display_interface.h"
+#include "display.h"
 #include "memzero.h"
 #include STM32_HAL_H
 
@@ -32,9 +32,6 @@
   (*((__IO uint8_t *)((uint32_t)(DISPLAY_MEMORY_BASE | \
                                  (1 << DISPLAY_MEMORY_PIN)))))
 #define DATA(X) (ADDR) = (X)
-
-// noop on TR as we don't need to push data to display
-#define PIXELDATA_DIRTY()
 
 static int DISPLAY_BACKLIGHT = -1;
 static int DISPLAY_ORIENTATION = -1;
@@ -97,7 +94,7 @@ void display_pixeldata(uint16_t c) {
   }
 }
 
-#define PIXELDATA(c) display_pixeldata(c)
+void display_pixeldata_dirty(void) {}
 
 void display_reset_state(void) {
   memzero(DISPLAY_STATE.RAM, sizeof(DISPLAY_STATE.RAM));
@@ -280,7 +277,7 @@ void display_init(void) {
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_FMC_CLK_ENABLE();
 
-  GPIO_InitTypeDef GPIO_InitStructure;
+  GPIO_InitTypeDef GPIO_InitStructure = {0};
 
   // LCD_RST/PC14
   GPIO_InitStructure.Mode = GPIO_MODE_OUTPUT_PP;
@@ -371,3 +368,5 @@ void display_reinit(void) {}
 const char *display_save(const char *prefix) { return NULL; }
 
 void display_clear_save(void) {}
+
+void display_finish_actions(void) {}

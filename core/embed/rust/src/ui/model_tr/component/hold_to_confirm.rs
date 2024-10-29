@@ -1,10 +1,11 @@
 use crate::{
-    strutil::StringType,
+    strutil::TString,
     time::{Duration, Instant},
     ui::{
         component::{Component, Event, EventCtx},
         event::ButtonEvent,
         geometry::Rect,
+        shape::Renderer,
     },
 };
 
@@ -18,21 +19,21 @@ pub enum HoldToConfirmMsg {
     FailedToConfirm,
 }
 
-pub struct HoldToConfirm<T>
-where
-    T: StringType,
-{
+pub struct HoldToConfirm {
     pos: ButtonPos,
-    loader: Loader<T>,
+    loader: Loader,
     text_width: i16,
 }
 
-impl<T> HoldToConfirm<T>
-where
-    T: StringType,
-{
-    pub fn text(pos: ButtonPos, text: T, styles: LoaderStyleSheet, duration: Duration) -> Self {
-        let text_width = styles.normal.font.visible_text_width(text.as_ref());
+impl HoldToConfirm {
+    pub fn text<T: Into<TString<'static>>>(
+        pos: ButtonPos,
+        text: T,
+        styles: LoaderStyleSheet,
+        duration: Duration,
+    ) -> Self {
+        let text = text.into();
+        let text_width = text.map(|t| styles.normal.font.visible_text_width(t));
         Self {
             pos,
             loader: Loader::text(text, styles).with_growing_duration(duration),
@@ -40,7 +41,7 @@ where
         }
     }
 
-    pub fn from_button_details(pos: ButtonPos, btn_details: ButtonDetails<T>) -> Self {
+    pub fn from_button_details(pos: ButtonPos, btn_details: ButtonDetails) -> Self {
         let duration = btn_details
             .duration
             .unwrap_or_else(|| Duration::from_millis(DEFAULT_DURATION_MS));
@@ -48,12 +49,13 @@ where
             ButtonContent::Text(text) => {
                 Self::text(pos, text, LoaderStyleSheet::default_loader(), duration)
             }
-            ButtonContent::Icon(_) => panic!("Icon is not supported"),
+            ButtonContent::Icon(_) => fatal_error!("Icon is not supported"),
         }
     }
 
     /// Updating the text of the component and re-placing it.
-    pub fn set_text(&mut self, text: T, button_area: Rect) {
+    pub fn set_text<T: Into<TString<'static>>>(&mut self, text: T, button_area: Rect) {
+        let text = text.into();
         self.text_width = self.loader.get_text_width(&text);
         self.loader.set_text(text);
         self.place(button_area);
@@ -71,7 +73,7 @@ where
         self.loader.get_duration()
     }
 
-    pub fn get_text(&self) -> &T {
+    pub fn get_text(&self) -> TString<'static> {
         self.loader.get_text()
     }
 
@@ -85,10 +87,7 @@ where
     }
 }
 
-impl<T> Component for HoldToConfirm<T>
-where
-    T: StringType,
-{
+impl Component for HoldToConfirm {
     type Msg = HoldToConfirmMsg;
 
     fn place(&mut self, bounds: Rect) -> Rect {
@@ -124,15 +123,16 @@ where
     fn paint(&mut self) {
         self.loader.paint();
     }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.loader.render(target);
+    }
 }
 
 // DEBUG-ONLY SECTION BELOW
 
 #[cfg(feature = "ui_debug")]
-impl<T> crate::trace::Trace for HoldToConfirm<T>
-where
-    T: StringType,
-{
+impl crate::trace::Trace for HoldToConfirm {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("HoldToConfirm");
         t.child("loader", &self.loader);

@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import storage.cache as storage_cache
 import trezorui2
-from trezor import ui
+from trezor import TR, ui
 
 from . import RustLayout
 
@@ -19,8 +19,8 @@ class HomescreenBase(RustLayout):
         super().__init__(layout=layout)
 
     def _paint(self) -> None:
-        self.layout.paint()
-        ui.refresh()
+        if self.layout.paint():
+            ui.refresh()
 
     def _first_paint(self) -> None:
         if storage_cache.homescreen_shown is not self.RENDER_INDICATOR:
@@ -42,8 +42,7 @@ class Homescreen(HomescreenBase):
     ) -> None:
         level = 1
         if notification is not None:
-            notification = notification.rstrip("!")
-            if "EXPERIMENTAL" in notification:
+            if notification == TR.homescreen__title_experimental_mode:
                 level = 2
             elif notification_is_error:
                 level = 0
@@ -66,8 +65,8 @@ class Homescreen(HomescreenBase):
         while True:
             is_connected = await usbcheck
             self.layout.usb_event(is_connected)
-            self.layout.paint()
-            ui.refresh()
+            if self.layout.paint():
+                ui.refresh()
 
     def create_tasks(self) -> Tuple[loop.AwaitableTask, ...]:
         return super().create_tasks() + (self.usb_checker_task(),)
@@ -80,6 +79,7 @@ class Lockscreen(HomescreenBase):
         self,
         label: str | None,
         bootscreen: bool = False,
+        coinjoin_authorized: bool = False,
     ) -> None:
         self.bootscreen = bootscreen
         skip = (
@@ -90,6 +90,7 @@ class Lockscreen(HomescreenBase):
                 label=label,
                 bootscreen=bootscreen,
                 skip_first_paint=skip,
+                coinjoin_authorized=coinjoin_authorized,
             ),
         )
 
@@ -104,10 +105,12 @@ class Busyscreen(HomescreenBase):
     RENDER_INDICATOR = storage_cache.BUSYSCREEN_ON
 
     def __init__(self, delay_ms: int) -> None:
+        from trezor import TR
+
         skip = storage_cache.homescreen_shown is self.RENDER_INDICATOR
         super().__init__(
             layout=trezorui2.show_progress_coinjoin(
-                title="Waiting for others",
+                title=TR.coinjoin__waiting_for_others,
                 indeterminate=True,
                 time_ms=delay_ms,
                 skip_first_paint=skip,

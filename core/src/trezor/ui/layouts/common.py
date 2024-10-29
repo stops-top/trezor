@@ -6,15 +6,16 @@ from trezor.messages import ButtonAck, ButtonRequest
 from trezor.wire import context
 
 if TYPE_CHECKING:
-    from typing import Any, Awaitable, Protocol
+    from typing import Awaitable, Protocol, TypeVar
 
-    LayoutType = Awaitable[Any]
+    T = TypeVar("T")
+
+    LayoutType = Awaitable
     PropertyType = tuple[str | None, str | bytes | None]
     ExceptionType = BaseException | type[BaseException]
 
     class ProgressLayout(Protocol):
-        def report(self, value: int, description: str | None = None) -> None:
-            ...
+        def report(self, value: int, description: str | None = None) -> None: ...
 
 
 async def button_request(
@@ -29,13 +30,13 @@ async def button_request(
 
 
 async def interact(
-    layout: LayoutType,
+    layout: LayoutType[T],
     br_type: str,
     br_code: ButtonRequestType = ButtonRequestType.Other,
-) -> Any:
+) -> T:
     pages = None
-    if hasattr(layout, "page_count") and layout.page_count() > 1:  # type: ignore [Cannot access member "page_count" for type "LayoutType"]
+    if hasattr(layout, "page_count") and layout.page_count() > 1:  # type: ignore [Cannot access attribute "page_count" for class "LayoutType"]
         # We know for certain how many pages the layout will have
-        pages = layout.page_count()  # type: ignore [Cannot access member "page_count" for type "LayoutType"]
+        pages = layout.page_count()  # type: ignore [Cannot access attribute "page_count" for class "LayoutType"]
     await button_request(br_type, br_code, pages)
-    return await context.wait(layout)
+    return await layout

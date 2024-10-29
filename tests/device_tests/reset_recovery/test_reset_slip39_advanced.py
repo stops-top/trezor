@@ -20,12 +20,12 @@ from shamir_mnemonic import shamir
 from trezorlib import device
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.exceptions import TrezorFailure
-from trezorlib.messages import BackupType
+from trezorlib.messages import BackupAvailability, BackupType
 
 from ...common import EXTERNAL_ENTROPY, WITH_MOCK_URANDOM, generate_entropy
 from ...input_flows import InputFlowSlip39AdvancedResetRecovery
 
-pytestmark = [pytest.mark.skip_t1]
+pytestmark = [pytest.mark.skip_t1b1]
 
 
 # TODO: test with different options
@@ -46,7 +46,6 @@ def test_reset_device_slip39_advanced(client: Client):
             passphrase_protection=False,
             pin_protection=False,
             label="test",
-            language="en-US",
             backup_type=BackupType.Slip39_Advanced,
         )
 
@@ -59,10 +58,10 @@ def test_reset_device_slip39_advanced(client: Client):
 
     # Check if device is properly initialized
     assert client.features.initialized is True
-    assert client.features.needs_backup is False
+    assert client.features.backup_availability == BackupAvailability.NotAvailable
     assert client.features.pin_protection is False
     assert client.features.passphrase_protection is False
-    assert client.features.backup_type is BackupType.Slip39_Advanced
+    assert client.features.backup_type is BackupType.Slip39_Advanced_Extendable
 
     # backup attempt fails because backup was done in reset
     with pytest.raises(TrezorFailure, match="ProcessError: Seed already backed up"):

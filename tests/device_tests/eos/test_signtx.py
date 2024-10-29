@@ -29,12 +29,15 @@ ADDRESS_N = parse_path("m/44h/194h/0h/0/0")
 pytestmark = [
     pytest.mark.altcoin,
     pytest.mark.eos,
-    pytest.mark.skip_t1,
+    pytest.mark.skip_t1b1,
+    pytest.mark.skip_t2b1,  # coin not supported
+    pytest.mark.skip_t3t1,
     pytest.mark.setup_client(mnemonic=MNEMONIC12),
 ]
 
 
-def test_eos_signtx_transfer_token(client: Client):
+@pytest.mark.parametrize("chunkify", (True, False))
+def test_eos_signtx_transfer_token(client: Client, chunkify: bool):
     transaction = {
         "expiration": "2018-07-14T10:43:28",
         "ref_block_num": 6439,
@@ -60,7 +63,7 @@ def test_eos_signtx_transfer_token(client: Client):
     }
 
     with client:
-        resp = eos.sign_tx(client, ADDRESS_N, transaction, CHAIN_ID)
+        resp = eos.sign_tx(client, ADDRESS_N, transaction, CHAIN_ID, chunkify=chunkify)
         assert isinstance(resp, EosSignedTx)
         assert (
             resp.signature

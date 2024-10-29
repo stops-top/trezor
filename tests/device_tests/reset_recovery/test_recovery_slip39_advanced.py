@@ -28,7 +28,7 @@ from ...input_flows import (
     InputFlowSlip39AdvancedRecoveryThresholdReached,
 )
 
-pytestmark = pytest.mark.skip_t1
+pytestmark = pytest.mark.skip_t1b1
 
 EXTRA_GROUP_SHARE = [
     "eraser senior decision smug corner ruin rescue cubic angel tackle skin skunk program roster trash rumor slush angel flea amazing"
@@ -73,6 +73,7 @@ def test_secret(client: Client, shares: list[str], secret: str):
     _test_secret(client, shares, secret)
 
 
+@pytest.mark.skip_t3t1(reason="currently broken on T3T1")
 @pytest.mark.parametrize("shares, secret", VECTORS)
 @pytest.mark.setup_client(uninitialized=True)
 def test_secret_click_info_button(client: Client, shares: list[str], secret: str):

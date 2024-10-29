@@ -7,21 +7,25 @@ use crate::{
         model_tt::{
             component::{
                 keyboard::{
-                    common::{paint_pending_marker, MultiTapKeyboard},
+                    common::{paint_pending_marker, render_pending_marker, MultiTapKeyboard},
                     mnemonic::{MnemonicInput, MnemonicInputMsg, MNEMONIC_KEY_COUNT},
                 },
                 Button, ButtonContent, ButtonMsg,
             },
             theme,
         },
+        shape,
+        shape::Renderer,
     },
 };
 
 const MAX_LENGTH: usize = 8;
 
 pub struct Bip39Input {
-    button: Button<&'static str>,
-    textbox: TextBox<MAX_LENGTH>,
+    button: Button,
+    // used only to keep track of suggestion text color
+    button_suggestion: Button,
+    textbox: TextBox,
     multi_tap: MultiTapKeyboard,
     options_num: Option<usize>,
     suggested_word: Option<&'static str>,
@@ -83,10 +87,12 @@ impl Component for Bip39Input {
     type Msg = MnemonicInputMsg;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        self.button.place(bounds)
+        self.button.place(bounds);
+        self.button_suggestion.place(bounds)
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
+        self.button_suggestion.event(ctx, event);
         if self.multi_tap.is_timeout_event(event) {
             self.on_timeout(ctx)
         } else if let Some(ButtonMsg::Clicked) = self.button.event(ctx, event) {
@@ -120,11 +126,12 @@ impl Component for Bip39Input {
         // Paint the rest of the suggested dictionary word.
         if let Some(word) = self.suggested_word.and_then(|w| w.get(text.len()..)) {
             let word_baseline = text_baseline + Offset::new(width, 0);
+            let style = self.button_suggestion.style();
             display::text_left(
                 word_baseline,
                 word,
                 style.font,
-                theme::GREY_LIGHT,
+                style.text_color,
                 style.button_color,
             );
         }
@@ -148,6 +155,51 @@ impl Component for Bip39Input {
         }
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        let area = self.button.area();
+        let style = self.button.style();
+
+        // First, paint the button background.
+        self.button.render_background(target, style);
+
+        // Paint the entered content (the prefix of the suggested word).
+        let text = self.textbox.content();
+        let width = style.font.text_width(text);
+        // Content starts in the left-center point, offset by 16px to the right and 8px
+        // to the bottom.
+        let text_baseline = area.top_left().center(area.bottom_left()) + Offset::new(16, 8);
+        shape::Text::new(text_baseline, text)
+            .with_font(style.font)
+            .with_fg(style.text_color)
+            .render(target);
+
+        // Paint the rest of the suggested dictionary word.
+        if let Some(word) = self.suggested_word.and_then(|w| w.get(text.len()..)) {
+            let word_baseline = text_baseline + Offset::new(width, 0);
+            let style = self.button_suggestion.style();
+            shape::Text::new(word_baseline, word)
+                .with_font(style.font)
+                .with_fg(style.text_color)
+                .render(target);
+        }
+
+        // Paint the pending marker.
+        if self.multi_tap.pending_key().is_some() {
+            render_pending_marker(target, text_baseline, text, style.font, style.text_color);
+        }
+
+        // Paint the icon.
+        if let ButtonContent::Icon(icon) = self.button.content() {
+            // Icon is painted in the right-center point, of expected size 16x16 pixels, and
+            // 16px from the right edge.
+            let icon_center = area.top_right().center(area.bottom_right()) - Offset::new(16 + 8, 0);
+            shape::ToifImage::new(icon_center, icon.toif)
+                .with_align(Alignment2D::CENTER)
+                .with_fg(style.text_color)
+                .render(target);
+        }
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.button.bounds(sink);
@@ -158,10 +210,28 @@ impl Bip39Input {
     pub fn new() -> Self {
         Self {
             button: Button::empty(),
-            textbox: TextBox::empty(),
+            textbox: TextBox::empty(MAX_LENGTH),
             multi_tap: MultiTapKeyboard::new(),
             options_num: None,
             suggested_word: None,
+            button_suggestion: Button::empty(),
+        }
+    }
+
+    pub fn prefilled_word(word: &str) -> Self {
+        // Word may be empty string, fallback to normal input
+        if word.is_empty() {
+            return Self::new();
+        }
+
+        // Styling the input to reflect already filled word
+        Self {
+            button: Button::with_icon(theme::ICON_LIST_CHECK).styled(theme::button_pin_confirm()),
+            textbox: TextBox::new(word, MAX_LENGTH),
+            multi_tap: MultiTapKeyboard::new(),
+            options_num: bip39::options_num(word),
+            suggested_word: bip39::complete_word(word),
+            button_suggestion: Button::empty().styled(theme::button_suggestion_confirm()),
         }
     }
 
@@ -223,6 +293,8 @@ impl Bip39Input {
                 self.button.set_stylesheet(ctx, theme::button_pin_confirm());
                 self.button
                     .set_content(ctx, ButtonContent::Icon(theme::ICON_LIST_CHECK));
+                self.button_suggestion
+                    .set_stylesheet(ctx, theme::button_suggestion_confirm());
             } else {
                 // Auto-complete button.
                 self.button.enable(ctx);
@@ -230,12 +302,14 @@ impl Bip39Input {
                     .set_stylesheet(ctx, theme::button_pin_autocomplete());
                 self.button
                     .set_content(ctx, ButtonContent::Icon(theme::ICON_CLICK));
+                self.button_suggestion
+                    .set_stylesheet(ctx, theme::button_suggestion_autocomplete());
             }
         } else {
             // Disabled button.
             self.button.disable(ctx);
             self.button.set_stylesheet(ctx, theme::button_pin());
-            self.button.set_content(ctx, ButtonContent::Text(""));
+            self.button.set_content(ctx, ButtonContent::Text("".into()));
         }
     }
 }

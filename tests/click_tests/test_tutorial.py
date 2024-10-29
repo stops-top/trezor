@@ -22,14 +22,16 @@ import pytest
 from trezorlib import device
 from trezorlib.exceptions import Cancelled
 
+from .. import translations as TR
+
 if TYPE_CHECKING:
     from trezorlib.debuglink import DebugLink
 
     from ..device_handler import BackgroundDeviceHandler
 
 
-# TR-only
-pytestmark = [pytest.mark.skip_t1, pytest.mark.skip_t2]
+# T2B1-only
+pytestmark = [pytest.mark.skip_t1b1, pytest.mark.skip_t2t1, pytest.mark.skip_t3t1]
 
 
 @contextmanager
@@ -55,7 +57,7 @@ def go_through_tutorial(debug: "DebugLink") -> None:
     debug.press_right(wait=True)
     debug.press_right(wait=True)
     layout = debug.press_middle(wait=True)
-    assert layout.title() == "TUTORIAL COMPLETE"
+    TR.assert_equals(layout.title(), "tutorial__title_tutorial_complete")
 
 
 @pytest.mark.setup_client(uninitialized=True)

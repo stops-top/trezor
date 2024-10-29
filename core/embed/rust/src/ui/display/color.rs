@@ -7,6 +7,13 @@ impl Color {
     pub const fn from_u16(val: u16) -> Self {
         Self(val)
     }
+    pub const fn from_u32(val: u32) -> Self {
+        Self::rgb(
+            ((val >> 16) & 0xFF) as u8,
+            ((val >> 8) & 0xFF) as u8,
+            (val & 0xFF) as u8,
+        )
+    }
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         let r = (r as u16 & 0xF8) << 8;
@@ -56,6 +63,10 @@ impl Color {
         self.0
     }
 
+    pub fn to_u32(self) -> u32 {
+        ((self.r() as u32) << 16) | ((self.g() as u32) << 8) | (self.b() as u32) | 0xff000000
+    }
+
     pub fn hi_byte(self) -> u8 {
         (self.to_u16() >> 8) as u8
     }
@@ -74,6 +85,20 @@ impl Color {
 
     pub const fn black() -> Self {
         Self::rgb(0, 0, 0)
+    }
+
+    /// Blends the color of `self` with the color of `fg` using specified
+    /// `alpha` value (ranging from 0 to 255).
+    ///
+    /// If `alpha` equals 0, the background color (`self`) is used.
+    /// If `alpha` equals 255, the foreground color (`fg`) is used.
+    pub fn blend(self, fg: Color, alpha: u8) -> Color {
+        let fg_mul = alpha as u16;
+        let bg_mul = (255 - alpha) as u16;
+        let r = (fg.r() as u16) * fg_mul + (self.r() as u16) * bg_mul;
+        let g = (fg.g() as u16) * fg_mul + (self.g() as u16) * bg_mul;
+        let b = (fg.b() as u16) * fg_mul + (self.b() as u16) * bg_mul;
+        Color::rgb((r / 255) as u8, (g / 255) as u8, (b / 255) as u8)
     }
 }
 
@@ -95,5 +120,17 @@ impl From<u16> for Color {
 impl From<Color> for u16 {
     fn from(val: Color) -> Self {
         val.to_u16()
+    }
+}
+
+impl From<u32> for Color {
+    fn from(val: u32) -> Self {
+        Self::from_u32(val)
+    }
+}
+
+impl From<Color> for u32 {
+    fn from(val: Color) -> Self {
+        val.to_u32()
     }
 }

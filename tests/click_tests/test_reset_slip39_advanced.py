@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from ..device_handler import BackgroundDeviceHandler
 
 
-pytestmark = [pytest.mark.skip_t1]
+pytestmark = [pytest.mark.skip_t1b1]
 
 
 @pytest.mark.setup_client(uninitialized=True)
@@ -62,70 +62,73 @@ def test_reset_slip39_advanced(
     reset.confirm_new_wallet(debug)
 
     # confirm back up
-    reset.confirm_read(debug, "Success")
+    reset.confirm_read(debug)
+
+    # confirm backup intro
+    reset.confirm_read(debug)
 
     # confirm checklist
-    reset.confirm_read(debug, "Checklist")
+    reset.confirm_read(debug)
 
     # set num of groups - default is 5
+    assert debug.model is not None
+    model_name: str = debug.model.internal_name
     if group_count < 5:
-        reset.set_selection(debug, buttons.RESET_MINUS, 5 - group_count)
+        reset.set_selection(debug, buttons.reset_minus(model_name), 5 - group_count)
     else:
-        reset.set_selection(debug, buttons.RESET_PLUS, group_count - 5)
+        reset.set_selection(debug, buttons.reset_plus(model_name), group_count - 5)
 
     # confirm checklist
-    reset.confirm_read(debug, "Checklist")
+    reset.confirm_read(debug)
 
     # set group threshold
     # TODO: could make it general as well
     if group_count == 2 and group_threshold == 2:
-        reset.set_selection(debug, buttons.RESET_PLUS, 0)
+        reset.set_selection(debug, buttons.reset_plus(model_name), 0)
     elif group_count == 16 and group_threshold == 16:
-        reset.set_selection(debug, buttons.RESET_PLUS, 11)
+        reset.set_selection(debug, buttons.reset_plus(model_name), 11)
     else:
         raise RuntimeError("not a supported combination")
 
     # confirm checklist
-    reset.confirm_read(debug, "Checklist")
+    reset.confirm_read(debug)
 
     # set share num and threshold for groups
     for _ in range(group_count):
         # set num of shares - default is 5
         if share_count < 5:
-            reset.set_selection(debug, buttons.RESET_MINUS, 5 - share_count)
+            reset.set_selection(debug, buttons.reset_minus(model_name), 5 - share_count)
         else:
-            reset.set_selection(debug, buttons.RESET_PLUS, share_count - 5)
+            reset.set_selection(debug, buttons.reset_plus(model_name), share_count - 5)
 
         # set share threshold
         # TODO: could make it general as well
         if share_count == 2 and share_threshold == 2:
-            reset.set_selection(debug, buttons.RESET_PLUS, 0)
+            reset.set_selection(debug, buttons.reset_plus(model_name), 0)
         elif share_count == 16 and share_threshold == 16:
-            reset.set_selection(debug, buttons.RESET_PLUS, 11)
+            reset.set_selection(debug, buttons.reset_plus(model_name), 11)
         else:
             raise RuntimeError("not a supported combination")
 
     # confirm backup warning
-    reset.confirm_read(debug, "Caution", middle_r=True)
+    reset.confirm_read(debug, middle_r=True)
 
     all_words: list[str] = []
     for _ in range(group_count):
         for _ in range(share_count):
             # read words
-            words = reset.read_words(
-                debug, messages.BackupType.Slip39_Advanced, do_htc=False
-            )
+            words = reset.read_words(debug, do_htc=False)
 
             # confirm words
             reset.confirm_words(debug, words)
 
             # confirm share checked
-            reset.confirm_read(debug, "Success")
+            reset.confirm_read(debug)
 
             all_words.append(" ".join(words))
 
     # confirm backup done
-    reset.confirm_read(debug, "Success")
+    reset.confirm_read(debug)
 
     # generate secret locally
     internal_entropy = debug.state().reset_entropy
@@ -139,7 +142,7 @@ def test_reset_slip39_advanced(
 
     features = device_handler.features()
     assert features.initialized is True
-    assert features.needs_backup is False
+    assert features.backup_availability == messages.BackupAvailability.NotAvailable
     assert features.pin_protection is False
     assert features.passphrase_protection is False
-    assert features.backup_type is messages.BackupType.Slip39_Advanced
+    assert features.backup_type is messages.BackupType.Slip39_Advanced_Extendable

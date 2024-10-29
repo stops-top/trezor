@@ -22,14 +22,19 @@ from typing import TYPE_CHECKING, Generator, Iterator
 
 import pytest
 import xdist
+from _pytest.reports import TestReport
 
-from trezorlib import debuglink, log
+from trezorlib import debuglink, log, models
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.device import apply_settings
 from trezorlib.device import wipe as wipe_device
 from trezorlib.transport import enumerate_devices, get_transport
 
-from . import ui_tests
+# register rewrites before importing from local package
+# so that we see details of failed asserts from this module
+pytest.register_assert_rewrite("tests.common")
+
+from . import translations, ui_tests
 from .device_handler import BackgroundDeviceHandler
 from .emulators import EmulatorWrapper
 
@@ -42,10 +47,7 @@ if TYPE_CHECKING:
 
 
 HERE = Path(__file__).resolve().parent
-
-
-# So that we see details of failed asserts from this module
-pytest.register_assert_rewrite("tests.common")
+CORE = HERE.parent / "core"
 
 
 def _emulator_wrapper_main_args() -> list[str]:
@@ -128,14 +130,23 @@ def _raw_client(request: pytest.FixtureRequest) -> Client:
     # Requesting the emulator fixture only if relevant.
     if request.session.config.getoption("control_emulators"):
         emu_fixture = request.getfixturevalue("emulator")
-        return emu_fixture.client
+        client = emu_fixture.client
     else:
         interact = os.environ.get("INTERACT") == "1"
         path = os.environ.get("TREZOR_PATH")
         if path:
-            return _client_from_path(request, path, interact)
+            client = _client_from_path(request, path, interact)
         else:
-            return _find_client(request, interact)
+            client = _find_client(request, interact)
+
+    # Setting the appropriate language
+    # Not doing it for T1
+    if client.model is not models.T1B1:
+        lang = request.session.config.getoption("lang") or "en"
+        assert isinstance(lang, str)
+        translations.set_language(client, lang)
+
+    return client
 
 
 def _client_from_path(
@@ -169,8 +180,8 @@ def client(
 
     Every test function that requires a client instance will get it from here.
     If we can't connect to a debuggable device, the test will fail.
-    If 'skip_t2' is used and TT is connected, the test is skipped. Vice versa with T1
-    and 'skip_t1'. Same with TR.
+    If 'skip_t2t1' is used and TT is connected, the test is skipped. Vice versa with T1
+    and 'skip_t1b1'. Same with T2B1, T3T1.
 
     The client instance is wiped and preconfigured with "all all all..." mnemonic, no
     password and no pin. It is possible to customize this with the `setup_client`
@@ -188,12 +199,26 @@ def client(
 
     @pytest.mark.experimental
     """
-    if request.node.get_closest_marker("skip_t2") and _raw_client.features.model == "T":
+    if (
+        request.node.get_closest_marker("skip_t2t1")
+        and _raw_client.model is models.T2T1
+    ):
         pytest.skip("Test excluded on Trezor T")
-    if request.node.get_closest_marker("skip_t1") and _raw_client.features.model == "1":
+    if (
+        request.node.get_closest_marker("skip_t1b1")
+        and _raw_client.model is models.T1B1
+    ):
         pytest.skip("Test excluded on Trezor 1")
-    if request.node.get_closest_marker("skip_tr") and _raw_client.features.model == "R":
-        pytest.skip("Test excluded on Trezor R")
+    if (
+        request.node.get_closest_marker("skip_t2b1")
+        and _raw_client.model is models.T2B1
+    ):
+        pytest.skip("Test excluded on Trezor T2B1")
+    if (
+        request.node.get_closest_marker("skip_t3t1")
+        and _raw_client.model is models.T3T1
+    ):
+        pytest.skip("Test excluded on Trezor T3T1")
 
     sd_marker = request.node.get_closest_marker("sd_card")
     if sd_marker and not _raw_client.features.sd_card_present:
@@ -226,6 +251,13 @@ def client(
 
     wipe_device(_raw_client)
 
+    # Load language again, as it got erased in wipe
+    if _raw_client.model is not models.T1B1:
+        lang = request.session.config.getoption("lang") or "en"
+        assert isinstance(lang, str)
+        if lang != "en":
+            translations.set_language(_raw_client, lang)
+
     setup_params = dict(
         uninitialized=False,
         mnemonic=" ".join(["all"] * 12),
@@ -250,7 +282,6 @@ def client(
             pin=setup_params["pin"],  # type: ignore
             passphrase_protection=use_passphrase,
             label="test",
-            language="en-US",
             needs_backup=setup_params["needs_backup"],  # type: ignore
             no_backup=setup_params["no_backup"],  # type: ignore
         )
@@ -354,6 +385,12 @@ def pytest_addoption(parser: "Parser") -> None:
         help="Generating a master-diff report. "
         "This shows all unique differing screens compared to master.",
     )
+    parser.addoption(
+        "--lang",
+        action="store",
+        choices=translations.LANGUAGES,
+        help="Run tests with a specified language: 'en' is the default",
+    )
 
 
 def pytest_configure(config: "Config") -> None:
@@ -362,9 +399,10 @@ def pytest_configure(config: "Config") -> None:
     Registers known markers, enables verbose output if requested.
     """
     # register known markers
-    config.addinivalue_line("markers", "skip_t1: skip the test on Trezor One")
-    config.addinivalue_line("markers", "skip_t2: skip the test on Trezor T")
-    config.addinivalue_line("markers", "skip_tr: skip the test on Trezor R")
+    config.addinivalue_line("markers", "skip_t1b1: skip the test on Trezor One")
+    config.addinivalue_line("markers", "skip_t2t1: skip the test on Trezor T")
+    config.addinivalue_line("markers", "skip_t2b1: skip the test on Trezor T2B1")
+    config.addinivalue_line("markers", "skip_t3t1: skip the test on Trezor T3T1")
     config.addinivalue_line(
         "markers", "experimental: enable experimental features on Trezor"
     )
@@ -384,11 +422,11 @@ def pytest_configure(config: "Config") -> None:
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Called for each test item (class, individual tests).
 
-    Ensures that altcoin tests are skipped, and that no test is skipped on
-    both T1 and TT.
+    Ensures that altcoin tests are skipped, and that no test is skipped for all models.
     """
     if all(
-        item.get_closest_marker(marker) for marker in ("skip_t1", "skip_t2", "skip_tr")
+        item.get_closest_marker(marker)
+        for marker in ("skip_t1b1", "skip_t2t1", "skip_t2b1", "skip_t3t1")
     ):
         raise RuntimeError("Don't skip tests for all trezor models!")
 
@@ -406,6 +444,20 @@ def pytest_runtest_makereport(item: pytest.Item, call) -> Generator:
     outcome = yield
     rep = outcome.get_result()
     setattr(item, f"rep_{rep.when}", rep)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_report_teststatus(
+    report: TestReport, config: Config
+) -> tuple[str, str, tuple[str, dict[str, bool]]] | None:
+    if report.passed:
+        for prop, _ in report.user_properties:
+            if prop == "ui_failed":
+                return "ui_failed", "U", ("UI-FAILED", {"red": True})
+            if prop == "ui_missing":
+                return "ui_missing", "M", ("UI-MISSING", {"yellow": True})
+    # else use default handling
+    return None
 
 
 @pytest.fixture

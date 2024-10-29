@@ -1,7 +1,12 @@
-use crate::ui::{
-    component::{Child, Component, Event, EventCtx, Label, Never, Pad},
-    constant::screen,
-    geometry::{Alignment2D, Point, Rect},
+use crate::{
+    strutil::TString,
+    ui::{
+        component::{Child, Component, Event, EventCtx, Label, Never, Pad},
+        constant::screen,
+        geometry::{Alignment2D, Point, Rect},
+        shape,
+        shape::Renderer,
+    },
 };
 
 use crate::ui::model_tt::{
@@ -15,22 +20,25 @@ const TITLE_AREA_START: i16 = 70;
 const MESSAGE_AREA_START: i16 = 116;
 
 #[cfg(feature = "bootloader")]
-const STYLE: &ResultStyle = &crate::ui::model_tt::bootloader::theme::RESULT_WIPE;
+const STYLE: &ResultStyle = &crate::ui::model_tt::theme::bootloader::RESULT_WIPE;
 #[cfg(not(feature = "bootloader"))]
 const STYLE: &ResultStyle = &super::theme::RESULT_ERROR;
 
-pub struct ErrorScreen<'a, T> {
+pub struct ErrorScreen<'a> {
     bg: Pad,
-    title: Child<Label<T>>,
-    message: Child<Label<T>>,
-    footer: Child<ResultFooter<'a, T>>,
+    title: Child<Label<'a>>,
+    message: Child<Label<'a>>,
+    footer: Child<ResultFooter<'a>>,
 }
 
-impl<T: AsRef<str>> ErrorScreen<'_, T> {
-    pub fn new(title: T, message: T, footer: T) -> Self {
+impl<'a> ErrorScreen<'a> {
+    pub fn new(title: TString<'a>, message: TString<'a>, footer: TString<'a>) -> Self {
         let title = Label::centered(title, STYLE.title_style());
         let message = Label::centered(message, STYLE.message_style());
-        let footer = ResultFooter::new(footer, STYLE);
+        let footer = ResultFooter::new(
+            Label::centered(footer, STYLE.title_style()).vertically_centered(),
+            STYLE,
+        );
 
         Self {
             bg: Pad::with_background(FATAL_ERROR_COLOR).with_clear(),
@@ -41,7 +49,7 @@ impl<T: AsRef<str>> ErrorScreen<'_, T> {
     }
 }
 
-impl<T: AsRef<str>> Component for ErrorScreen<'_, T> {
+impl<'a> Component for ErrorScreen<'a> {
     type Msg = Never;
 
     fn place(&mut self, _bounds: Rect) -> Rect {
@@ -59,7 +67,7 @@ impl<T: AsRef<str>> Component for ErrorScreen<'_, T> {
         );
         self.message.place(message_area);
 
-        let (_, bottom_area) = ResultFooter::<T>::split_bounds();
+        let (_, bottom_area) = ResultFooter::split_bounds();
         self.footer.place(bottom_area);
 
         screen()
@@ -82,5 +90,20 @@ impl<T: AsRef<str>> Component for ErrorScreen<'_, T> {
         self.title.paint();
         self.message.paint();
         self.footer.paint();
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.bg.render(target);
+
+        let icon = ICON_WARNING40;
+        shape::ToifImage::new(Point::new(screen().center().x, ICON_TOP), icon.toif)
+            .with_fg(WHITE)
+            .with_bg(FATAL_ERROR_COLOR)
+            .with_align(Alignment2D::TOP_CENTER)
+            .render(target);
+
+        self.title.render(target);
+        self.message.render(target);
+        self.footer.render(target);
     }
 }

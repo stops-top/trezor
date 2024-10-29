@@ -21,7 +21,8 @@ from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.tools import H_, parse_path
 
 from ... import bip32
-from ...common import MNEMONIC12
+from ...common import MNEMONIC12, is_core
+from ...input_flows import InputFlowConfirmAllWarnings
 from ...tx_cache import TxCache
 from .signtx import request_finished, request_input, request_meta, request_output
 
@@ -145,7 +146,6 @@ def _responses(
     change: int = 0,
     foreign: bool = False,
 ):
-    tt = client.features.model == "T"
     resp = [
         request_input(0),
         request_input(1),
@@ -154,7 +154,7 @@ def _responses(
 
     if change != 1:
         resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
-        if tt:
+        if is_core(client):
             resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
     elif foreign:
         resp.append(messages.ButtonRequest(code=B.UnknownDerivationPath))
@@ -163,7 +163,7 @@ def _responses(
 
     if change != 2:
         resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
-        if tt:
+        if is_core(client):
             resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
     elif foreign:
         resp.append(messages.ButtonRequest(code=B.UnknownDerivationPath))
@@ -244,6 +244,9 @@ def test_external_internal(client: Client):
         client.set_expected_responses(
             _responses(client, INP1, INP2, change=2, foreign=True)
         )
+        if is_core(client):
+            IF = InputFlowConfirmAllWarnings(client)
+            client.set_input_flow(IF.get())
         _, serialized_tx = btc.sign_tx(
             client,
             "Bitcoin",
@@ -277,6 +280,9 @@ def test_internal_external(client: Client):
         client.set_expected_responses(
             _responses(client, INP1, INP2, change=1, foreign=True)
         )
+        if is_core(client):
+            IF = InputFlowConfirmAllWarnings(client)
+            client.set_input_flow(IF.get())
         _, serialized_tx = btc.sign_tx(
             client,
             "Bitcoin",

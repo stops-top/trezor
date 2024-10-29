@@ -16,15 +16,14 @@ for arg in "$@"; do
     fi
 done
 
-MODELS=(T2T1 T2B1 D001)
+MODELS=(T2T1 T2B1 T3T1 D001 D002)
 
 for MODEL in ${MODELS[@]}; do
     cd $MODEL
     echo "Generating vendor headers for $MODEL"
     # construct all vendor headers
     for fn in *.json; do
-        name=$(echo $fn | sed 's/vendor_\(.*\)\.json/\1/')
-        $BUILDVH $QUIET $CHECK vendor_${name}.json vendor_${name}.toif vendorheader_${name}_unsigned.bin
+        $BUILDVH $QUIET $CHECK $fn
     done
 
     TMPDIR=$(mktemp -d)

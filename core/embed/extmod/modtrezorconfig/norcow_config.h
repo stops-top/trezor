@@ -20,24 +20,16 @@
 #ifndef __NORCOW_CONFIG_H__
 #define __NORCOW_CONFIG_H__
 
+#include TREZOR_BOARD
 #include "flash.h"
 #include "model.h"
 
 #define NORCOW_HEADER_LEN 0
 #define NORCOW_SECTOR_COUNT 2
 
-#if defined TREZOR_MODEL_T || defined TREZOR_MODEL_R || \
-    defined TREZOR_MODEL_DISC1
-#define NORCOW_SECTOR_SIZE (64 * 1024)
-#elif defined TREZOR_MODEL_1
-#define NORCOW_SECTOR_SIZE (16 * 1024)
-#else
-#error Unknown Trezor model
-#endif
-
 /*
  * Current storage version.
  */
-#define NORCOW_VERSION ((uint32_t)0x00000003)
+#define NORCOW_VERSION ((uint32_t)0x00000005)
 
 #endif

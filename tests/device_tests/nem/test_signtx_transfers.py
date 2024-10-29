@@ -20,18 +20,20 @@ from trezorlib import messages, nem
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.tools import parse_path
 
-from ...common import MNEMONIC12
+from ...common import MNEMONIC12, is_core
 
 pytestmark = [
     pytest.mark.altcoin,
     pytest.mark.nem,
+    pytest.mark.skip_t2b1,  # coin not supported,
+    pytest.mark.skip_t3t1,
     pytest.mark.setup_client(mnemonic=MNEMONIC12),
 ]
 
 
 # assertion data from T1
-def test_nem_signtx_simple(client: Client):
-    tt = client.features.model == "T"
+@pytest.mark.parametrize("chunkify", (True, False))
+def test_nem_signtx_simple(client: Client, chunkify: bool):
     with client:
         client.set_expected_responses(
             [
@@ -40,7 +42,7 @@ def test_nem_signtx_simple(client: Client):
                 # Unencrypted message
                 messages.ButtonRequest(code=messages.ButtonRequestType.ConfirmOutput),
                 (
-                    tt,
+                    is_core(client),
                     messages.ButtonRequest(
                         code=messages.ButtonRequestType.ConfirmOutput
                     ),
@@ -67,6 +69,7 @@ def test_nem_signtx_simple(client: Client):
                 },
                 "version": (0x98 << 24),
             },
+            chunkify=chunkify,
         )
 
         assert (
@@ -82,7 +85,6 @@ def test_nem_signtx_simple(client: Client):
 @pytest.mark.setup_client(mnemonic=MNEMONIC12)
 def test_nem_signtx_encrypted_payload(client: Client):
     with client:
-        tt = client.features.model == "T"
         client.set_expected_responses(
             [
                 # Confirm transfer and network fee
@@ -90,7 +92,7 @@ def test_nem_signtx_encrypted_payload(client: Client):
                 # Ask for encryption
                 messages.ButtonRequest(code=messages.ButtonRequestType.ConfirmOutput),
                 (
-                    tt,
+                    is_core(client),
                     messages.ButtonRequest(
                         code=messages.ButtonRequestType.ConfirmOutput
                     ),

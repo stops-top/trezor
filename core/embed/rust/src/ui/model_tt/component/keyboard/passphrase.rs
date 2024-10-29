@@ -1,17 +1,24 @@
-use crate::ui::{
-    component::{
-        base::ComponentExt, text::common::TextBox, Child, Component, Event, EventCtx, Never,
+use crate::{
+    strutil::TString,
+    ui::{
+        component::{
+            base::ComponentExt, text::common::TextBox, Child, Component, Event, EventCtx, Never,
+        },
+        display,
+        geometry::{Grid, Offset, Rect},
+        model_tt::component::{
+            button::{Button, ButtonContent, ButtonMsg},
+            keyboard::common::{paint_pending_marker, render_pending_marker, MultiTapKeyboard},
+            swipe::{Swipe, SwipeDirection},
+            theme, ScrollBar,
+        },
+        shape,
+        shape::Renderer,
+        util::long_line_content_with_ellipsis,
     },
-    display,
-    geometry::{Grid, Offset, Rect},
-    model_tt::component::{
-        button::{Button, ButtonContent, ButtonMsg},
-        keyboard::common::{paint_pending_marker, MultiTapKeyboard},
-        swipe::{Swipe, SwipeDirection},
-        theme, ScrollBar,
-    },
-    util::long_line_content_with_ellipsis,
 };
+
+use core::cell::Cell;
 
 pub enum PassphraseKeyboardMsg {
     Confirmed,
@@ -21,11 +28,11 @@ pub enum PassphraseKeyboardMsg {
 pub struct PassphraseKeyboard {
     page_swipe: Swipe,
     input: Child<Input>,
-    back: Child<Button<&'static str>>,
-    confirm: Child<Button<&'static str>>,
-    keys: [Child<Button<&'static str>>; KEY_COUNT],
+    back: Child<Button>,
+    confirm: Child<Button>,
+    keys: [Child<Button>; KEY_COUNT],
     scrollbar: ScrollBar,
-    fade: bool,
+    fade: Cell<bool>,
 }
 
 const STARTING_PAGE: usize = 1;
@@ -63,24 +70,24 @@ impl PassphraseKeyboard {
                 Child::new(Button::new(Self::key_content(text)).styled(theme::button_pin()))
             }),
             scrollbar: ScrollBar::horizontal(),
-            fade: false,
+            fade: Cell::new(false),
         }
     }
 
-    fn key_text(content: &ButtonContent<&'static str>) -> &'static str {
+    fn key_text(content: &ButtonContent) -> TString<'static> {
         match content {
-            ButtonContent::Text(text) => text,
-            ButtonContent::Icon(_) => " ",
-            ButtonContent::IconAndText(_) => " ",
-            ButtonContent::Empty => "",
-            ButtonContent::IconBlend(_, _, _) => "",
+            ButtonContent::Text(text) => *text,
+            ButtonContent::Icon(_) => " ".into(),
+            ButtonContent::IconAndText(_) => " ".into(),
+            ButtonContent::Empty => "".into(),
+            ButtonContent::IconBlend(_, _, _) => "".into(),
         }
     }
 
-    fn key_content(text: &'static str) -> ButtonContent<&'static str> {
+    fn key_content(text: &'static str) -> ButtonContent {
         match text {
             " " => ButtonContent::Icon(theme::ICON_SPACE),
-            t => ButtonContent::Text(t),
+            t => ButtonContent::Text(t.into()),
         }
     }
 
@@ -99,7 +106,7 @@ impl PassphraseKeyboard {
         // Update buttons.
         self.replace_button_content(ctx, key_page);
         // Reset backlight to normal level on next paint.
-        self.fade = true;
+        self.fade.set(true);
         // So that swipe does not visually enable the input buttons when max length
         // reached
         self.update_input_btns_state(ctx);
@@ -156,7 +163,7 @@ impl PassphraseKeyboard {
     /// We should disable the input when the passphrase has reached maximum
     /// length and we are not cycling through the characters.
     fn is_button_active(&self, key: usize) -> bool {
-        let textbox_not_full = !self.input.inner().textbox.is_full();
+        let textbox_not_full = self.input.inner().textbox.len() < MAX_LENGTH;
         let key_is_pending = {
             if let Some(pending) = self.input.inner().multi_tap.pending_key() {
                 pending == key
@@ -270,7 +277,7 @@ impl Component for PassphraseKeyboard {
                 // character in textbox. If not, let's just append the first character.
                 let text = Self::key_text(btn.inner().content());
                 self.input.mutate(ctx, |ctx, i| {
-                    let edit = i.multi_tap.click_key(ctx, key, text);
+                    let edit = text.map(|c| i.multi_tap.click_key(ctx, key, c));
                     i.textbox.apply(ctx, edit);
                 });
                 self.after_edit(ctx);
@@ -288,10 +295,23 @@ impl Component for PassphraseKeyboard {
         for btn in &mut self.keys {
             btn.paint();
         }
-        if self.fade {
-            self.fade = false;
+        if self.fade.take() {
             // Note that this is blocking and takes some time.
-            display::fade_backlight(theme::BACKLIGHT_NORMAL);
+            display::fade_backlight(theme::backlight::get_backlight_normal());
+        }
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.input.render(target);
+        self.scrollbar.render(target);
+        self.confirm.render(target);
+        self.back.render(target);
+        for btn in &self.keys {
+            btn.render(target);
+        }
+        if self.fade.take() {
+            // Note that this is blocking and takes some time.
+            display::fade_backlight(theme::backlight::get_backlight_normal());
         }
     }
 
@@ -309,7 +329,7 @@ impl Component for PassphraseKeyboard {
 
 struct Input {
     area: Rect,
-    textbox: TextBox<MAX_LENGTH>,
+    textbox: TextBox,
     multi_tap: MultiTapKeyboard,
 }
 
@@ -317,7 +337,7 @@ impl Input {
     fn new() -> Self {
         Self {
             area: Rect::zero(),
-            textbox: TextBox::empty(),
+            textbox: TextBox::empty(MAX_LENGTH),
             multi_tap: MultiTapKeyboard::new(),
         }
     }
@@ -375,6 +395,40 @@ impl Component for Input {
         }
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        let style = theme::label_keyboard();
+
+        let text_baseline = self.area.top_left() + Offset::y(style.text_font.text_height())
+            - Offset::y(style.text_font.text_baseline());
+
+        let text = self.textbox.content();
+
+        shape::Bar::new(self.area).with_bg(theme::BG).render(target);
+
+        // Find out how much text can fit into the textbox.
+        // Accounting for the pending marker, which draws itself one pixel longer than
+        // the last character
+        let available_area_width = self.area.width() - 1;
+        let text_to_display =
+            long_line_content_with_ellipsis(text, "...", style.text_font, available_area_width);
+
+        shape::Text::new(text_baseline, &text_to_display)
+            .with_font(style.text_font)
+            .with_fg(style.text_color)
+            .render(target);
+
+        // Paint the pending marker.
+        if self.multi_tap.pending_key().is_some() {
+            render_pending_marker(
+                target,
+                text_baseline,
+                &text_to_display,
+                style.text_font,
+                style.text_color,
+            );
+        }
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area)
@@ -385,6 +439,6 @@ impl Component for Input {
 impl crate::trace::Trace for PassphraseKeyboard {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("PassphraseKeyboard");
-        t.string("passphrase", self.passphrase());
+        t.string("passphrase", self.passphrase().into());
     }
 }

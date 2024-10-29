@@ -22,7 +22,9 @@
 
 #include "common.h"
 #include "display.h"
+#include "display_draw.h"
 #include "flash.h"
+#include "flash_otp.h"
 #include "image.h"
 #include "mini_printf.h"
 #include "mpu.h"
@@ -38,19 +40,12 @@
 #include "bootui.h"
 #include "messages.h"
 #include "model.h"
-// #include "mpu.h"
 
-const uint8_t BOOTLOADER_KEY_M = 2;
-const uint8_t BOOTLOADER_KEY_N = 3;
-static const uint8_t * const BOOTLOADER_KEYS[] = {
-    (const uint8_t *)"\xc2\xc8\x7a\x49\xc5\xa3\x46\x09\x77\xfb\xb2\xec\x9d\xfe\x60\xf0\x6b\xd6\x94\xdb\x82\x44\xbd\x49\x81\xfe\x3b\x7a\x26\x30\x7f\x3f",
-    (const uint8_t *)"\x80\xd0\x36\xb0\x87\x39\xb8\x46\xf4\xcb\x77\x59\x30\x78\xde\xb2\x5d\xc9\x48\x7a\xed\xcf\x52\xe3\x0b\x4f\xb7\xcd\x70\x24\x17\x8a",
-    (const uint8_t *)"\xb8\x30\x7a\x71\xf5\x52\xc6\x0a\x4c\xbb\x31\x7f\xf4\x8b\x82\xcd\xbf\x6b\x6b\xb5\xf0\x4c\x92\x0f\xec\x7b\xad\xf0\x17\x88\x37\x51",
-// comment the lines above and uncomment the lines below to use a custom signed vendorheader
-//    (const uint8_t *)"\xd7\x59\x79\x3b\xbc\x13\xa2\x81\x9a\x82\x7c\x76\xad\xb6\xfb\xa8\xa4\x9a\xee\x00\x7f\x49\xf2\xd0\x99\x2d\x99\xb8\x25\xad\x2c\x48",
-//    (const uint8_t *)"\x63\x55\x69\x1c\x17\x8a\x8f\xf9\x10\x07\xa7\x47\x8a\xfb\x95\x5e\xf7\x35\x2c\x63\xe7\xb2\x57\x03\x98\x4c\xf7\x8b\x26\xe2\x1a\x56",
-//    (const uint8_t *)"\xee\x93\xa4\xf6\x6f\x8d\x16\xb8\x19\xbb\x9b\xeb\x9f\xfc\xcd\xfc\xdc\x14\x12\xe8\x7f\xee\x6a\x32\x4c\x2a\x99\xa1\xe0\xe6\x71\x48",
-};
+#ifdef USE_HASH_PROCESSOR
+#include "hash_processor.h"
+#endif
+
+// #include "mpu.h"
 
 #define USB_IFACE_NUM 0
 
@@ -62,8 +57,8 @@ static void usb_init_all(secbool usb21_landing) {
       .vendor_id = 0x1209,
       .product_id = 0x53C0,
       .release_num = 0x0200,
-      .manufacturer = "SatoshiLabs",
-      .product = "TREZOR",
+      .manufacturer = MODEL_USB_MANUFACTURER,
+      .product = MODEL_USB_PRODUCT,
       .serial_number = "000000000000000000000000",
       .interface = "TREZOR Interface",
       .usb21_enabled = sectrue,
@@ -74,8 +69,8 @@ static void usb_init_all(secbool usb21_landing) {
 
   static const usb_webusb_info_t webusb_info = {
       .iface_num = USB_IFACE_NUM,
-      .ep_in = USB_EP_DIR_IN | 0x01,
-      .ep_out = USB_EP_DIR_OUT | 0x01,
+      .ep_in = 0x01,
+      .ep_out = 0x01,
       .subclass = 0,
       .protocol = 0,
       .max_packet_len = sizeof(rx_buffer),
@@ -83,11 +78,11 @@ static void usb_init_all(secbool usb21_landing) {
       .polling_interval = 1,
   };
 
-  usb_init(&dev_info);
+  ensure(usb_init(&dev_info), NULL);
 
   ensure(usb_webusb_add(&webusb_info), NULL);
 
-  usb_start();
+  ensure(usb_start(), NULL);
 }
 
 static secbool bootloader_usb_loop(const vendor_header *const vhdr,
@@ -122,12 +117,10 @@ static secbool bootloader_usb_loop(const vendor_header *const vhdr,
         r = process_msg_WipeDevice(USB_IFACE_NUM, msg_size, buf);
         if (r < 0) {  // error
           ui_screen_fail();
-          usb_stop();
           usb_deinit();
           return secfalse;  // shutdown
         } else {            // success
           ui_screen_done(0, sectrue);
-          usb_stop();
           usb_deinit();
           return secfalse;  // shutdown
         }
@@ -139,7 +132,6 @@ static secbool bootloader_usb_loop(const vendor_header *const vhdr,
         r = process_msg_FirmwareUpload(USB_IFACE_NUM, msg_size, buf);
         if (r < 0 && r != UPLOAD_ERR_USER_ABORT) {  // error, but not user abort
           ui_screen_fail();
-          usb_stop();
           usb_deinit();
           return secfalse;    // shutdown
         } else if (r == 0) {  // last chunk received
@@ -151,7 +143,6 @@ static secbool bootloader_usb_loop(const vendor_header *const vhdr,
           hal_delay(1000);
           ui_screen_done(1, secfalse);
           hal_delay(1000);
-          usb_stop();
           usb_deinit();
           return sectrue;  // jump to firmware
         }
@@ -164,11 +155,6 @@ static secbool bootloader_usb_loop(const vendor_header *const vhdr,
         break;
     }
   }
-}
-
-secbool check_vendor_header_keys(vendor_header *const vhdr) {
-  return check_vendor_header_sig(vhdr, BOOTLOADER_KEY_M, BOOTLOADER_KEY_N,
-                                 BOOTLOADER_KEYS);
 }
 
 static secbool check_vendor_header_lock(const vendor_header *const vhdr) {
@@ -220,7 +206,10 @@ int main(void) {
   random_delays_init();
 #ifdef USE_TOUCH
   touch_init();
-  touch_power_on();
+#endif
+
+#ifdef USE_HASH_PROCESSOR
+  hash_processor_init();
 #endif
 
   mpu_config_bootloader();

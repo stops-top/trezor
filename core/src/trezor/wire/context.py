@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
     LoadedMessageType = TypeVar("LoadedMessageType", bound=protobuf.MessageType)
 
+    T = TypeVar("T")
+
 
 class UnexpectedMessage(Exception):
     """A message was received that is not part of the current workflow.
@@ -70,14 +72,14 @@ class Context:
     if TYPE_CHECKING:
 
         @overload
-        async def read(self, expected_types: Container[int]) -> protobuf.MessageType:
-            ...
+        async def read(
+            self, expected_types: Container[int]
+        ) -> protobuf.MessageType: ...
 
         @overload
         async def read(
             self, expected_types: Container[int], expected_type: type[LoadedMessageType]
-        ) -> LoadedMessageType:
-            ...
+        ) -> LoadedMessageType: ...
 
     async def read(
         self,
@@ -155,23 +157,34 @@ class Context:
             memoryview(buffer)[:msg_size],
         )
 
+    async def call(
+        self,
+        msg: protobuf.MessageType,
+        expected_type: type[LoadedMessageType],
+    ) -> LoadedMessageType:
+        assert expected_type.MESSAGE_WIRE_TYPE is not None
+
+        await self.write(msg)
+        del msg
+        return await self.read((expected_type.MESSAGE_WIRE_TYPE,), expected_type)
+
 
 CURRENT_CONTEXT: Context | None = None
 
 
-def wait(*tasks: Awaitable) -> Any:
+def wait(task: Awaitable[T]) -> Awaitable[T]:
     """
-    Wait until one of the passed tasks finishes, and return the result, while servicing
-    the wire context.
+    Wait until the passed in task finishes, and return the result, while servicing the
+    wire context.
 
     Used to make sure the device is responsive on USB while waiting for user
-    interaction. If a message is received before any of the passed in tasks finish, it
-    raises an `UnexpectedMessage` exception, returning control to the session handler.
+    interaction. If a message is received before the task finishes, it raises an
+    `UnexpectedMessage` exception, returning control to the session handler.
     """
     if CURRENT_CONTEXT is None:
-        return loop.race(*tasks)
+        return task
     else:
-        return loop.race(CURRENT_CONTEXT.read(()), *tasks)
+        return loop.race(CURRENT_CONTEXT.read(()), task)
 
 
 async def call(
@@ -184,11 +197,7 @@ async def call(
     if CURRENT_CONTEXT is None:
         raise RuntimeError("No wire context")
 
-    assert expected_type.MESSAGE_WIRE_TYPE is not None
-
-    await CURRENT_CONTEXT.write(msg)
-    del msg
-    return await CURRENT_CONTEXT.read((expected_type.MESSAGE_WIRE_TYPE,), expected_type)
+    return await CURRENT_CONTEXT.call(msg, expected_type)
 
 
 async def call_any(

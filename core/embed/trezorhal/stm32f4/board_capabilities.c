@@ -20,9 +20,7 @@
 #include "board_capabilities.h"
 #include <string.h>
 #include "common.h"
-
-#define handle_fault(msg) \
-  (__fatal_error("Fault detected", msg, __FILE__, __LINE__, __func__))
+#include "model.h"
 
 static uint32_t board_name = 0;
 
@@ -52,7 +50,7 @@ void parse_boardloader_capabilities() {
     pos += 2;
 
     if (pos + length > end) {
-      handle_fault("Bad capabilities format.");
+      error_shutdown("Bad capabilities format");
     }
 
     switch (tag) {

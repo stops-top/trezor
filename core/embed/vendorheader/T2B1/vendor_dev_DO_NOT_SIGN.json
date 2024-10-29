@@ -1,11 +1,13 @@
 {
-    "header_len": 4608,
+    "header_len": 512,
     "text": "DEV ONLY, DO NOT USE!",
     "hw_model": "T2B1",
     "expiry": 0,
-    "version": [0, 0],
+    "version": [0, 1],
     "sig_m": 2,
     "trust": {
+        "_reserved": 0,
+        "_dont_provide_secret": false,
         "allow_run_with_secret": true,
         "show_vendor_string": false,
         "require_user_click": false,

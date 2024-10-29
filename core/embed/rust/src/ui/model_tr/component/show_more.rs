@@ -1,8 +1,9 @@
 use crate::{
-    strutil::StringType,
+    strutil::TString,
     ui::{
         component::{Child, Component, Event, EventCtx},
         geometry::{Insets, Rect},
+        shape::Renderer,
     },
 };
 
@@ -14,21 +15,25 @@ pub enum CancelInfoConfirmMsg {
     Confirmed,
 }
 
-pub struct ShowMore<T, U>
-where
-    U: StringType,
-{
+pub struct ShowMore<T> {
     content: Child<T>,
-    buttons: Child<ButtonController<U>>,
+    buttons: Child<ButtonController>,
 }
 
-impl<T, U> ShowMore<T, U>
+impl<T> ShowMore<T>
 where
     T: Component,
-    U: StringType + Clone,
 {
-    pub fn new(content: T) -> Self {
-        let btn_layout = ButtonLayout::cancel_armed_info("CONFIRM".into());
+    pub fn new(
+        content: T,
+        cancel_button: Option<TString<'static>>,
+        button: TString<'static>,
+    ) -> Self {
+        let btn_layout = if let Some(cancel_text) = cancel_button {
+            ButtonLayout::text_armed_info(cancel_text, button)
+        } else {
+            ButtonLayout::cancel_armed_info(button)
+        };
         Self {
             content: Child::new(content),
             buttons: Child::new(ButtonController::new(btn_layout)),
@@ -36,10 +41,9 @@ where
     }
 }
 
-impl<T, U> Component for ShowMore<T, U>
+impl<T> Component for ShowMore<T>
 where
     T: Component,
-    U: StringType + Clone,
 {
     type Msg = CancelInfoConfirmMsg;
 
@@ -54,7 +58,7 @@ where
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
         let button_event = self.buttons.event(ctx, event);
 
-        if let Some(ButtonControllerMsg::Triggered(pos)) = button_event {
+        if let Some(ButtonControllerMsg::Triggered(pos, _)) = button_event {
             match pos {
                 ButtonPos::Left => {
                     return Some(CancelInfoConfirmMsg::Cancelled);
@@ -74,15 +78,19 @@ where
         self.content.paint();
         self.buttons.paint();
     }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.content.render(target);
+        self.buttons.render(target);
+    }
 }
 
 // DEBUG-ONLY SECTION BELOW
 
 #[cfg(feature = "ui_debug")]
-impl<T, U> crate::trace::Trace for ShowMore<T, U>
+impl<T> crate::trace::Trace for ShowMore<T>
 where
     T: crate::trace::Trace + Component,
-    U: StringType + Clone,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("ShowMore");

@@ -28,19 +28,24 @@
 // Maximum data register length supported by OPTIGA.
 #define OPTIGA_DATA_REG_LEN 277
 
+// Maximum command and response APDU size supported by OPTIGA.
+#define OPTIGA_MAX_APDU_SIZE 1557
+
 optiga_result optiga_init(void);
-optiga_result optiga_execute_command(
-    bool presentation_layer, const uint8_t *command_data, size_t command_size,
-    uint8_t *response_data, size_t max_response_size, size_t *response_size);
+optiga_result optiga_sec_chan_handshake(const uint8_t *secret,
+                                        size_t secret_size);
+optiga_result optiga_execute_command(const uint8_t *command_data,
+                                     size_t command_size,
+                                     uint8_t *response_data,
+                                     size_t max_response_size,
+                                     size_t *response_size);
 
 optiga_result optiga_resync(void);
 optiga_result optiga_soft_reset(void);
 optiga_result optiga_set_data_reg_len(size_t size);
 
-#ifndef NDEBUG
-typedef void (*optiga_log_hex_t)(const char *prefix, const uint8_t *data,
-                                 size_t data_size);
-void optiga_set_log_hex(optiga_log_hex_t f);
+#if !PRODUCTION
+void optiga_transport_set_log_hex(optiga_log_hex_t f);
 #endif
 
 #endif

@@ -2,13 +2,15 @@ use heapless::Vec;
 
 use crate::{
     error::Error,
-    strutil::StringType,
+    strutil::TString,
+    translations::TR,
     ui::{
         component::{
             text::paragraphs::{Paragraph, ParagraphSource, ParagraphVecShort, Paragraphs, VecExt},
             Child, Component, Event, EventCtx, Pad, Paginate, Qr,
         },
         geometry::Rect,
+        shape::Renderer,
     },
 };
 
@@ -19,47 +21,46 @@ use super::{
 const MAX_XPUBS: usize = 16;
 const QR_BORDER: i16 = 3;
 
-pub struct AddressDetails<T>
-where
-    T: StringType,
-{
+pub struct AddressDetails {
     qr_code: Qr,
-    details_view: Paragraphs<ParagraphVecShort<T>>,
-    xpub_view: Frame<Paragraphs<Paragraph<T>>, T>,
-    xpubs: Vec<(T, T), MAX_XPUBS>,
+    details_view: Paragraphs<ParagraphVecShort<'static>>,
+    xpub_view: Frame<Paragraphs<Paragraph<'static>>>,
+    xpubs: Vec<(TString<'static>, TString<'static>), MAX_XPUBS>,
     current_page: usize,
     current_subpage: usize,
     area: Rect,
     pad: Pad,
-    buttons: Child<ButtonController<T>>,
+    buttons: Child<ButtonController>,
 }
 
-impl<T> AddressDetails<T>
-where
-    T: StringType + Clone,
-{
+impl AddressDetails {
     pub fn new(
-        qr_address: T,
+        qr_address: TString<'static>,
         case_sensitive: bool,
-        account: Option<T>,
-        path: Option<T>,
+        account: Option<TString<'static>>,
+        path: Option<TString<'static>>,
     ) -> Result<Self, Error> {
-        let qr_code = Qr::new(qr_address, case_sensitive)?.with_border(QR_BORDER);
+        let qr_code = qr_address
+            .map(|s| Qr::new(s, case_sensitive))?
+            .with_border(QR_BORDER);
         let details_view = {
             let mut para = ParagraphVecShort::new();
             if let Some(account) = account {
-                para.add(Paragraph::new(&theme::TEXT_BOLD, "Account:".into()));
+                para.add(Paragraph::new(&theme::TEXT_BOLD, TR::words__account_colon));
                 para.add(Paragraph::new(&theme::TEXT_MONO, account));
             }
             if let Some(path) = path {
-                para.add(Paragraph::new(&theme::TEXT_BOLD, "Derivation path:".into()));
+                para.add(Paragraph::new(
+                    &theme::TEXT_BOLD,
+                    TR::address_details__derivation_path_colon,
+                ));
                 para.add(Paragraph::new(&theme::TEXT_MONO, path));
             }
             Paragraphs::new(para)
         };
         let xpub_view = Frame::new(
             "".into(),
-            Paragraph::new(&theme::TEXT_MONO_DATA, "".into()).into_paragraphs(),
+            Paragraph::new(&theme::TEXT_MONO_DATA, "").into_paragraphs(),
         );
 
         let result = Self {
@@ -76,7 +77,11 @@ where
         Ok(result)
     }
 
-    pub fn add_xpub(&mut self, title: T, xpub: T) -> Result<(), Error> {
+    pub fn add_xpub(
+        &mut self,
+        title: TString<'static>,
+        xpub: TString<'static>,
+    ) -> Result<(), Error> {
         self.xpubs
             .push((title, xpub))
             .map_err(|_| Error::OutOfRange)
@@ -108,10 +113,10 @@ where
 
     /// Button layout for the current page.
     /// Normally there are arrows everywhere, apart from the right side of the
-    /// last page. On xpub pages there is VIEW FULL middle button when it
+    /// last page. On xpub pages there is SHOW ALL middle button when it
     /// cannot fit one page. On xpub subpages there are wide arrows to
     /// scroll.
-    fn get_button_layout(&mut self) -> ButtonLayout<T> {
+    fn get_button_layout(&mut self) -> ButtonLayout {
         let (left, middle, right) = if self.is_in_subpage() {
             let left = Some(ButtonDetails::up_arrow_icon_wide());
             let right = if self.is_last_subpage() {
@@ -123,7 +128,7 @@ where
         } else {
             let left = Some(ButtonDetails::left_arrow_icon());
             let middle = if self.is_xpub_page() && self.subpages_in_current_page() > 1 {
-                Some(ButtonDetails::armed_text("VIEW FULL".into()))
+                Some(ButtonDetails::armed_text(TR::buttons__show_all.into()))
             } else {
                 None
             };
@@ -151,9 +156,9 @@ where
 
     fn fill_xpub_page(&mut self, ctx: &mut EventCtx) {
         let i = self.current_page - 2;
-        self.xpub_view.update_title(ctx, self.xpubs[i].0.clone());
+        self.xpub_view.update_title(ctx, self.xpubs[i].0);
         self.xpub_view.update_content(ctx, |p| {
-            p.inner_mut().update(self.xpubs[i].1.clone());
+            p.inner_mut().update(self.xpubs[i].1);
             p.change_page(0)
         });
     }
@@ -175,10 +180,7 @@ where
     }
 }
 
-impl<T> Component for AddressDetails<T>
-where
-    T: StringType + Clone,
-{
+impl Component for AddressDetails {
     type Msg = ();
 
     fn place(&mut self, bounds: Rect) -> Rect {
@@ -204,7 +206,7 @@ where
         };
 
         let button_event = self.buttons.event(ctx, event);
-        if let Some(ButtonControllerMsg::Triggered(button)) = button_event {
+        if let Some(ButtonControllerMsg::Triggered(button, _)) = button_event {
             if self.is_in_subpage() {
                 match button {
                     ButtonPos::Left => {
@@ -258,6 +260,16 @@ where
         }
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.pad.render(target);
+        self.buttons.render(target);
+        match self.current_page {
+            0 => self.qr_code.render(target),
+            1 => self.details_view.render(target),
+            _ => self.xpub_view.render(target),
+        }
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area)
@@ -265,10 +277,7 @@ where
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T> crate::trace::Trace for AddressDetails<T>
-where
-    T: StringType + Clone,
-{
+impl crate::trace::Trace for AddressDetails {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("AddressDetails");
         match self.current_page {

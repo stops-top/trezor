@@ -1,16 +1,16 @@
 use crate::{
+    strutil::TString,
     time::{Duration, Instant},
     ui::{
         animation::Animation,
         component::{Component, Event, EventCtx, Never, TimerToken},
-        display,
-        display::{Color, Font},
-        geometry::Rect,
+        display::{self, Color, Font},
+        geometry::{Offset, Rect},
+        shape::{self, Renderer},
         util::animation_disabled,
     },
 };
 
-const MILLIS_PER_LETTER_M: u32 = 300;
 const ANIMATION_DURATION_MS: u32 = 2000;
 const PAUSE_DURATION_MS: u32 = 1000;
 
@@ -22,13 +22,13 @@ enum State {
     PauseRight,
 }
 
-pub struct Marquee<T> {
+pub struct Marquee {
     area: Rect,
     pause_token: Option<TimerToken>,
     min_offset: i16,
     max_offset: i16,
     state: State,
-    text: T,
+    text: TString<'static>,
     font: Font,
     fg: Color,
     bg: Color,
@@ -36,11 +36,8 @@ pub struct Marquee<T> {
     pause: Duration,
 }
 
-impl<T> Marquee<T>
-where
-    T: AsRef<str>,
-{
-    pub fn new(text: T, font: Font, fg: Color, bg: Color) -> Self {
+impl Marquee {
+    pub fn new(text: TString<'static>, font: Font, fg: Color, bg: Color) -> Self {
         Self {
             area: Rect::zero(),
             pause_token: None,
@@ -56,7 +53,7 @@ where
         }
     }
 
-    pub fn set_text(&mut self, text: T) {
+    pub fn set_text(&mut self, text: TString<'static>) {
         self.text = text;
     }
 
@@ -67,7 +64,7 @@ where
         }
 
         if let State::Initial = self.state {
-            let text_width = self.font.text_width(self.text.as_ref());
+            let text_width = self.text.map(|t| self.font.text_width(t));
             let max_offset = self.area.width() - text_width;
 
             self.min_offset = 0;
@@ -123,40 +120,28 @@ where
     }
 
     pub fn paint_anim(&mut self, offset: i16) {
-        display::marquee(
-            self.area,
-            self.text.as_ref(),
-            offset,
-            self.font,
-            self.fg,
-            self.bg,
-        );
+        self.text
+            .map(|t| display::marquee(self.area, t, offset, self.font, self.fg, self.bg));
+    }
+
+    pub fn render_anim<'s>(&'s self, target: &mut impl Renderer<'s>, offset: i16) {
+        target.in_window(self.area, &|target| {
+            let text_height = self.font.text_height();
+            let pos = self.area.top_left() + Offset::new(offset, text_height - 1);
+            self.text.map(|t| {
+                shape::Text::new(pos, t)
+                    .with_font(self.font)
+                    .with_fg(self.fg)
+                    .render(target);
+            });
+        });
     }
 }
 
-impl<T> Component for Marquee<T>
-where
-    T: AsRef<str>,
-{
+impl Component for Marquee {
     type Msg = Never;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        let base_width = self.font.text_width("M");
-        let text_width = self.font.text_width(self.text.as_ref());
-        let area_width = bounds.width();
-
-        let shift_width = if area_width > text_width {
-            area_width - text_width
-        } else {
-            text_width - area_width
-        };
-
-        let mut duration = (MILLIS_PER_LETTER_M * shift_width as u32) / base_width as u32;
-        if duration < MILLIS_PER_LETTER_M {
-            duration = MILLIS_PER_LETTER_M;
-        }
-
-        self.duration = Duration::from_millis(duration);
         self.area = bounds;
         self.area
     }
@@ -242,15 +227,36 @@ where
             }
         }
     }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        let now = Instant::now();
+
+        match self.state {
+            State::Initial => {
+                self.render_anim(target, 0);
+            }
+            State::PauseRight => {
+                self.render_anim(target, self.min_offset);
+            }
+            State::PauseLeft => {
+                self.render_anim(target, self.max_offset);
+            }
+            _ => {
+                let progress = self.progress(now);
+                if let Some(done) = progress {
+                    self.render_anim(target, done);
+                } else {
+                    self.render_anim(target, 0);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T> crate::trace::Trace for Marquee<T>
-where
-    T: AsRef<str>,
-{
+impl crate::trace::Trace for Marquee {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("Marquee");
-        t.string("text", self.text.as_ref());
+        t.string("text", self.text);
     }
 }

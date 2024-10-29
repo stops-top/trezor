@@ -20,10 +20,15 @@
 #include <string.h>
 #include <sys/types.h>
 
+#include "boot_args.h"
 #include "common.h"
 #include "display.h"
+#include "display_utils.h"
+#include "fault_handlers.h"
 #include "flash.h"
+#include "flash_otp.h"
 #include "image.h"
+#include "lowlevel.h"
 #include "messages.pb.h"
 #include "random_delays.h"
 #include "secbool.h"
@@ -34,6 +39,9 @@
 #endif
 #ifdef USE_I2C
 #include "i2c.h"
+#endif
+#ifdef USE_OPTIGA
+#include "optiga_hal.h"
 #endif
 #ifdef USE_TOUCH
 #include "touch.h"
@@ -47,6 +55,10 @@
 #ifdef USE_RGB_LED
 #include "rgb_led.h"
 #endif
+#ifdef USE_HASH_PROCESSOR
+#include "hash_processor.h"
+#endif
+
 #include "model.h"
 #include "usb.h"
 #include "version.h"
@@ -60,31 +72,22 @@
 #include "emulator.h"
 #else
 #include "compiler_traits.h"
-#include "mini_printf.h"
 #include "mpu.h"
 #include "platform.h"
 #endif
 
-const uint8_t BOOTLOADER_KEY_M = 2;
-const uint8_t BOOTLOADER_KEY_N = 3;
-static const uint8_t * const BOOTLOADER_KEYS[] = {
-#if !PRODUCTION
-    /*** DEVEL/QA KEYS  ***/
-    (const uint8_t *)"\xd7\x59\x79\x3b\xbc\x13\xa2\x81\x9a\x82\x7c\x76\xad\xb6\xfb\xa8\xa4\x9a\xee\x00\x7f\x49\xf2\xd0\x99\x2d\x99\xb8\x25\xad\x2c\x48",
-    (const uint8_t *)"\x63\x55\x69\x1c\x17\x8a\x8f\xf9\x10\x07\xa7\x47\x8a\xfb\x95\x5e\xf7\x35\x2c\x63\xe7\xb2\x57\x03\x98\x4c\xf7\x8b\x26\xe2\x1a\x56",
-    (const uint8_t *)"\xee\x93\xa4\xf6\x6f\x8d\x16\xb8\x19\xbb\x9b\xeb\x9f\xfc\xcd\xfc\xdc\x14\x12\xe8\x7f\xee\x6a\x32\x4c\x2a\x99\xa1\xe0\xe6\x71\x48",
-#else
-    MODEL_BOOTLOADER_KEYS
-#endif
-};
-
 #define USB_IFACE_NUM 0
 
 typedef enum {
-  CONTINUE = 0,
-  RETURN = 1,
-  SHUTDOWN = 2,
+  SHUTDOWN = 0,
+  CONTINUE_TO_FIRMWARE = 0xAABBCCDD,
+  RETURN_TO_MENU = 0x55667788,
 } usb_result_t;
+
+void failed_jump_to_firmware(void);
+
+CONFIDENTIAL volatile secbool dont_optimize_out_true = sectrue;
+CONFIDENTIAL volatile void (*firmware_jump_fn)(void) = failed_jump_to_firmware;
 
 static void usb_init_all(secbool usb21_landing) {
   usb_dev_info_t dev_info = {
@@ -94,8 +97,8 @@ static void usb_init_all(secbool usb21_landing) {
       .vendor_id = 0x1209,
       .product_id = 0x53C0,
       .release_num = 0x0200,
-      .manufacturer = "SatoshiLabs",
-      .product = "TREZOR",
+      .manufacturer = MODEL_USB_MANUFACTURER,
+      .product = MODEL_USB_PRODUCT,
       .serial_number = "000000000000000000000000",
       .interface = "TREZOR Interface",
       .usb21_enabled = sectrue,
@@ -109,8 +112,8 @@ static void usb_init_all(secbool usb21_landing) {
 #ifdef TREZOR_EMULATOR
       .emu_port = 21324,
 #else
-      .ep_in = USB_EP_DIR_IN | 0x01,
-      .ep_out = USB_EP_DIR_OUT | 0x01,
+      .ep_in = 0x01,
+      .ep_out = 0x01,
 #endif
       .subclass = 0,
       .protocol = 0,
@@ -119,11 +122,11 @@ static void usb_init_all(secbool usb21_landing) {
       .polling_interval = 1,
   };
 
-  usb_init(&dev_info);
+  ensure(usb_init(&dev_info), NULL);
 
   ensure(usb_webusb_add(&webusb_info), NULL);
 
-  usb_start();
+  ensure(usb_start(), NULL);
 }
 
 static usb_result_t bootloader_usb_loop(const vendor_header *const vhdr,
@@ -162,22 +165,19 @@ static usb_result_t bootloader_usb_loop(const vendor_header *const vhdr,
         if (INPUT_CANCEL == response) {
           send_user_abort(USB_IFACE_NUM, "Wipe cancelled");
           hal_delay(100);
-          usb_stop();
           usb_deinit();
-          return RETURN;
+          return RETURN_TO_MENU;
         }
         ui_screen_wipe();
         r = process_msg_WipeDevice(USB_IFACE_NUM, msg_size, buf);
         if (r < 0) {  // error
           screen_wipe_fail();
           hal_delay(100);
-          usb_stop();
           usb_deinit();
           return SHUTDOWN;
         } else {  // success
           screen_wipe_success();
           hal_delay(100);
-          usb_stop();
           usb_deinit();
           return SHUTDOWN;
         }
@@ -189,18 +189,17 @@ static usb_result_t bootloader_usb_loop(const vendor_header *const vhdr,
         r = process_msg_FirmwareUpload(USB_IFACE_NUM, msg_size, buf);
         if (r < 0 && r != UPLOAD_ERR_USER_ABORT) {  // error, but not user abort
           if (r == UPLOAD_ERR_BOOTLOADER_LOCKED) {
-            ui_screen_install_restricted();
+            // This function does not return
+            show_install_restricted_screen();
           } else {
             ui_screen_fail();
           }
-          usb_stop();
           usb_deinit();
           return SHUTDOWN;
         } else if (r == UPLOAD_ERR_USER_ABORT) {
           hal_delay(100);
-          usb_stop();
           usb_deinit();
-          return RETURN;
+          return RETURN_TO_MENU;
         } else if (r == 0) {  // last chunk received
           ui_screen_install_progress_upload(1000);
           ui_screen_done(4, sectrue);
@@ -210,29 +209,25 @@ static usb_result_t bootloader_usb_loop(const vendor_header *const vhdr,
           hal_delay(1000);
           ui_screen_done(1, secfalse);
           hal_delay(1000);
-          usb_stop();
           usb_deinit();
-          ui_screen_boot_empty(true);
-          return CONTINUE;
+          return CONTINUE_TO_FIRMWARE;
         }
         break;
       case MessageType_MessageType_GetFeatures:
         process_msg_GetFeatures(USB_IFACE_NUM, msg_size, buf, vhdr, hdr);
         break;
-#ifdef USE_OPTIGA
+#if defined USE_OPTIGA && !defined STM32U5
       case MessageType_MessageType_UnlockBootloader:
         response = ui_screen_unlock_bootloader_confirm();
         if (INPUT_CANCEL == response) {
           send_user_abort(USB_IFACE_NUM, "Bootloader unlock cancelled");
           hal_delay(100);
-          usb_stop();
           usb_deinit();
-          return RETURN;
+          return RETURN_TO_MENU;
         }
         process_msg_UnlockBootloader(USB_IFACE_NUM, msg_size, buf);
         screen_unlock_bootloader_success();
         hal_delay(100);
-        usb_stop();
         usb_deinit();
         return SHUTDOWN;
         break;
@@ -242,11 +237,6 @@ static usb_result_t bootloader_usb_loop(const vendor_header *const vhdr,
         break;
     }
   }
-}
-
-secbool check_vendor_header_keys(const vendor_header *const vhdr) {
-  return check_vendor_header_sig(vhdr, BOOTLOADER_KEY_M, BOOTLOADER_KEY_N,
-                                 BOOTLOADER_KEYS);
 }
 
 static secbool check_vendor_header_lock(const vendor_header *const vhdr) {
@@ -268,7 +258,7 @@ static secbool check_vendor_header_lock(const vendor_header *const vhdr) {
 
 // protection against bootloader downgrade
 
-#if PRODUCTION
+#if PRODUCTION && !defined STM32U5
 
 static void check_bootloader_version(void) {
   uint8_t bits[FLASH_OTP_BLOCK_SIZE];
@@ -294,237 +284,11 @@ static void check_bootloader_version(void) {
 
 #endif
 
-#ifndef TREZOR_EMULATOR
-int main(void) {
-  // grab "stay in bootloader" flag as soon as possible
-  register uint32_t r11 __asm__("r11");
-  volatile uint32_t stay_in_bootloader_flag = r11;
-#else
-int bootloader_main(void) {
-#endif
+void failed_jump_to_firmware(void) { error_shutdown("(glitch)"); }
 
-  random_delays_init();
-  // display_init_seq();
-#ifdef USE_DMA2D
-  dma2d_init();
-#endif
-
-  display_reinit();
-
-  ui_screen_boot_empty(false);
-
-  mpu_config_bootloader();
-
+void real_jump_to_firmware(void) {
   const image_header *hdr = NULL;
-  vendor_header vhdr;
-  // detect whether the device contains a valid firmware
-  secbool firmware_present = sectrue;
-
-  if (sectrue != read_vendor_header((const uint8_t *)FIRMWARE_START, &vhdr)) {
-    firmware_present = secfalse;
-  }
-
-  if (sectrue == firmware_present) {
-    firmware_present = check_vendor_header_keys(&vhdr);
-  }
-
-  if (sectrue == firmware_present) {
-    firmware_present = check_vendor_header_lock(&vhdr);
-  }
-
-  if (sectrue == firmware_present) {
-    hdr = read_image_header(
-        (const uint8_t *)(size_t)(FIRMWARE_START + vhdr.hdrlen),
-        FIRMWARE_IMAGE_MAGIC, FIRMWARE_IMAGE_MAXSIZE);
-    if (hdr != (const image_header *)(size_t)(FIRMWARE_START + vhdr.hdrlen)) {
-      firmware_present = secfalse;
-    }
-  }
-  if (sectrue == firmware_present) {
-    firmware_present = check_image_model(hdr);
-  }
-  if (sectrue == firmware_present) {
-    firmware_present =
-        check_image_header_sig(hdr, vhdr.vsig_m, vhdr.vsig_n, vhdr.vpub);
-  }
-  if (sectrue == firmware_present) {
-    firmware_present = check_image_contents(
-        hdr, IMAGE_HEADER_SIZE + vhdr.hdrlen, &FIRMWARE_AREA);
-  }
-
-#if defined TREZOR_MODEL_T
-  set_core_clock(CLOCK_180_MHZ);
-  display_set_little_endian();
-#endif
-
-#ifdef USE_I2C
-  i2c_init();
-#endif
-
-#ifdef USE_TOUCH
-  touch_power_on();
-  touch_init();
-#endif
-
-#ifdef USE_BUTTON
-  button_init();
-#endif
-
-#ifdef USE_CONSUMPTION_MASK
-  consumption_mask_init();
-#endif
-
-#ifdef USE_RGB_LED
-  rgb_led_init();
-#endif
-
-  unit_variant_init();
-
-#if PRODUCTION
-  check_bootloader_version();
-#endif
-
-  // was there reboot with request to stay in bootloader?
-  secbool stay_in_bootloader = secfalse;
-  if (stay_in_bootloader_flag == STAY_IN_BOOTLOADER_FLAG) {
-    stay_in_bootloader = sectrue;
-  }
-
-  // delay to detect touch or skip if we know we are staying in bootloader
-  // anyway
-  uint32_t touched = 0;
-#ifdef USE_TOUCH
-  if (firmware_present == sectrue && stay_in_bootloader != sectrue) {
-    for (int i = 0; i < 100; i++) {
-      touched = touch_is_detected() | touch_read();
-      if (touched) {
-        break;
-      }
-#ifdef TREZOR_EMULATOR
-      hal_delay(25);
-#else
-      hal_delay(1);
-#endif
-    }
-  }
-#elif defined USE_BUTTON
-  button_read();
-  if (button_state_left() == 1) {
-    touched = 1;
-  }
-#endif
-
-  // start the bootloader if no or broken firmware found ...
-  if (firmware_present != sectrue) {
-#ifdef TREZOR_EMULATOR
-    // wait a bit so that the empty lock icon is visible
-    // (on a real device, we are waiting for touch init which takes longer)
-    hal_delay(400);
-#endif
-    // ignore stay in bootloader
-    stay_in_bootloader = secfalse;
-    touched = false;
-
-    ui_set_initial_setup(true);
-
-    // keep the model screen up for a while
-#ifndef USE_BACKLIGHT
-    hal_delay(1500);
-#else
-    // backlight fading takes some time so the explicit delay here is shorter
-    hal_delay(1000);
-#endif
-
-    // show welcome screen
-    ui_screen_welcome();
-
-    // erase storage
-    ensure(flash_area_erase_bulk(STORAGE_AREAS, STORAGE_AREAS_COUNT, NULL),
-           NULL);
-
-    // and start the usb loop
-    if (bootloader_usb_loop(NULL, NULL) != CONTINUE) {
-      return 1;
-    }
-  }
-
-  // ... or if user touched the screen on start
-  // ... or we have stay_in_bootloader flag to force it
-  if (touched || stay_in_bootloader == sectrue) {
-    ui_set_initial_setup(false);
-
-    screen_t screen = SCREEN_INTRO;
-
-    while (true) {
-      bool continue_to_firmware = false;
-      uint32_t ui_result = 0;
-
-      switch (screen) {
-        case SCREEN_INTRO:
-          ui_result = ui_screen_intro(&vhdr, hdr);
-          if (ui_result == 1) {
-            screen = SCREEN_MENU;
-          }
-          if (ui_result == 2) {
-            screen = SCREEN_WAIT_FOR_HOST;
-          }
-          break;
-        case SCREEN_MENU:
-          ui_result = ui_screen_menu();
-          if (ui_result == 1) {  // exit menu
-            screen = SCREEN_INTRO;
-          }
-          if (ui_result == 2) {  // reboot
-            ui_screen_boot_empty(true);
-            continue_to_firmware = true;
-          }
-          if (ui_result == 3) {  // wipe
-            screen = SCREEN_WIPE_CONFIRM;
-          }
-          break;
-        case SCREEN_WIPE_CONFIRM:
-          ui_result = screen_wipe_confirm();
-          if (ui_result == INPUT_CANCEL) {
-            // canceled
-            screen = SCREEN_MENU;
-          }
-          if (ui_result == INPUT_CONFIRM) {
-            ui_screen_wipe();
-            secbool r = bootloader_WipeDevice();
-            if (r != sectrue) {  // error
-              screen_wipe_fail();
-              return 1;
-            } else {  // success
-              screen_wipe_success();
-              return 1;
-            }
-          }
-          break;
-        case SCREEN_WAIT_FOR_HOST:
-          screen_connect();
-          switch (bootloader_usb_loop(&vhdr, hdr)) {
-            case CONTINUE:
-              continue_to_firmware = true;
-              break;
-            case RETURN:
-              screen = SCREEN_INTRO;
-              break;
-            case SHUTDOWN:
-              return 1;
-              break;
-            default:
-              break;
-          }
-          break;
-        default:
-          break;
-      }
-
-      if (continue_to_firmware) {
-        break;
-      }
-    }
-  }
+  vendor_header vhdr = {0};
 
   ensure(read_vendor_header((const uint8_t *)FIRMWARE_START, &vhdr),
          "Firmware is corrupted");
@@ -551,23 +315,21 @@ int bootloader_main(void) {
                               &FIRMWARE_AREA),
          "Firmware is corrupted");
 
-#ifdef USE_OPTIGA
-  if (((vhdr.vtrust & VTRUST_SECRET) != 0) && (sectrue != secret_wiped())) {
-    ui_screen_install_restricted();
-    return 1;
-  }
-#endif
+  secret_prepare_fw(
+      ((vhdr.vtrust & VTRUST_SECRET_MASK) == VTRUST_SECRET_ALLOW) * sectrue,
+      ((vhdr.vtrust & VTRUST_NO_WARNING) == VTRUST_NO_WARNING) * sectrue);
 
-  // if all VTRUST flags are unset = ultimate trust => skip the procedure
-  if ((vhdr.vtrust & VTRUST_ALL) != VTRUST_ALL) {
+  // if all warnings are disabled in VTRUST flags then skip the procedure
+  if ((vhdr.vtrust & VTRUST_NO_WARNING) != VTRUST_NO_WARNING) {
     ui_fadeout();
-    ui_screen_boot(&vhdr, hdr);
+    ui_screen_boot(&vhdr, hdr, 0);
     ui_fadein();
 
-    int delay = (vhdr.vtrust & VTRUST_WAIT) ^ VTRUST_WAIT;
+    // The delay is encoded in bitwise complement form.
+    int delay = (vhdr.vtrust & VTRUST_WAIT_MASK) ^ VTRUST_WAIT_MASK;
     if (delay > 1) {
       while (delay > 0) {
-        ui_screen_boot_wait(delay);
+        ui_screen_boot(&vhdr, hdr, delay);
         hal_delay(1000);
         delay--;
       }
@@ -575,13 +337,15 @@ int bootloader_main(void) {
       hal_delay(1000);
     }
 
-    if ((vhdr.vtrust & VTRUST_CLICK) == 0) {
-      ui_screen_boot_click();
+    if ((vhdr.vtrust & VTRUST_NO_CLICK) == 0) {
+      ui_screen_boot(&vhdr, hdr, -1);
+      ui_click();
     }
 
-    ui_screen_boot_empty(false);
+    ui_screen_boot_stage_1(false);
   }
 
+  display_finish_actions();
   ensure_compatible_settings();
 
   // mpu_config_firmware();
@@ -589,8 +353,360 @@ int bootloader_main(void) {
 
   mpu_config_off();
   jump_to(FIRMWARE_START + vhdr.hdrlen + IMAGE_HEADER_SIZE);
+}
+
+#ifdef STM32U5
+__attribute__((noreturn)) void jump_to_fw_through_reset(void) {
+  display_finish_actions();
+  display_fade(display_backlight(-1), 0, 200);
+
+  __disable_irq();
+  delete_secrets();
+  NVIC_SystemReset();
+  for (;;)
+    ;
+}
+#endif
+
+#ifndef TREZOR_EMULATOR
+int main(void) {
+#else
+int bootloader_main(void) {
+#endif
+  secbool stay_in_bootloader = secfalse;
+
+  random_delays_init();
+
+#if defined TREZOR_MODEL_T
+  set_core_clock(CLOCK_180_MHZ);
+#endif
+
+#ifdef USE_HASH_PROCESSOR
+  hash_processor_init();
+#endif
+
+#ifdef USE_I2C
+  i2c_init();
+#endif
+
+  display_reinit();
+
+#ifdef USE_DMA2D
+  dma2d_init();
+#endif
+
+  unit_variant_init();
+
+#ifdef USE_TOUCH
+#ifdef TREZOR_MODEL_T3T1
+  // on T3T1, tester needs to run without touch, so making an exception
+  // until unit variant is written in OTP
+  if (unit_variant_present()) {
+    ensure(touch_init(), "Touch screen panel was not loaded properly.");
+  } else {
+    touch_init();
+  }
+#else
+  ensure(touch_init(), "Touch screen panel was not loaded properly.");
+#endif
+#endif
+
+  ui_screen_boot_stage_1(false);
+
+  mpu_config_bootloader();
+
+  fault_handlers_init();
+
+#ifdef TREZOR_EMULATOR
+  // wait a bit so that the empty lock icon is visible
+  // (on a real device, we are waiting for touch init which takes longer)
+  hal_delay(400);
+#endif
+
+  const image_header *hdr = NULL;
+  vendor_header vhdr;
+
+  // detect whether the device contains a valid firmware
+  volatile secbool vhdr_present = secfalse;
+  volatile secbool vhdr_keys_ok = secfalse;
+  volatile secbool vhdr_lock_ok = secfalse;
+  volatile secbool img_hdr_ok = secfalse;
+  volatile secbool model_ok = secfalse;
+  volatile secbool header_present = secfalse;
+  volatile secbool firmware_present = secfalse;
+  volatile secbool firmware_present_backup = secfalse;
+  volatile secbool auto_upgrade = secfalse;
+
+  vhdr_present = read_vendor_header((const uint8_t *)FIRMWARE_START, &vhdr);
+
+  if (sectrue == vhdr_present) {
+    vhdr_keys_ok = check_vendor_header_keys(&vhdr);
+  }
+
+  if (sectrue == vhdr_keys_ok) {
+    vhdr_lock_ok = check_vendor_header_lock(&vhdr);
+  }
+
+  if (sectrue == vhdr_lock_ok) {
+    hdr = read_image_header(
+        (const uint8_t *)(size_t)(FIRMWARE_START + vhdr.hdrlen),
+        FIRMWARE_IMAGE_MAGIC, FIRMWARE_IMAGE_MAXSIZE);
+    if (hdr == (const image_header *)(size_t)(FIRMWARE_START + vhdr.hdrlen)) {
+      img_hdr_ok = sectrue;
+    }
+  }
+  if (sectrue == img_hdr_ok) {
+    model_ok = check_image_model(hdr);
+  }
+  if (sectrue == model_ok) {
+    header_present =
+        check_image_header_sig(hdr, vhdr.vsig_m, vhdr.vsig_n, vhdr.vpub);
+  }
+
+  if (sectrue == header_present) {
+    firmware_present = check_image_contents(
+        hdr, IMAGE_HEADER_SIZE + vhdr.hdrlen, &FIRMWARE_AREA);
+    firmware_present_backup = firmware_present;
+  }
+
+#ifdef USE_OPTIGA
+  optiga_hal_init();
+#endif
+
+#ifdef USE_BUTTON
+  button_init();
+#endif
+
+#ifdef USE_CONSUMPTION_MASK
+  consumption_mask_init();
+#endif
+
+#ifdef USE_RGB_LED
+  rgb_led_init();
+#endif
+
+#if PRODUCTION && !defined STM32U5
+  // for STM32U5, this check is moved to boardloader
+  check_bootloader_version();
+#endif
+
+  switch (bootargs_get_command()) {
+    case BOOT_COMMAND_STOP_AND_WAIT:
+      // firmare requested to stay in bootloader
+      stay_in_bootloader = sectrue;
+      break;
+    case BOOT_COMMAND_INSTALL_UPGRADE:
+      if (firmware_present == sectrue) {
+        // continue without user interaction
+        auto_upgrade = sectrue;
+      }
+      break;
+    default:
+      break;
+  }
+
+  ensure(dont_optimize_out_true * (firmware_present == firmware_present_backup),
+         NULL);
+
+  // delay to detect touch or skip if we know we are staying in bootloader
+  // anyway
+  uint32_t touched = 0;
+#ifdef USE_TOUCH
+  if (firmware_present == sectrue && stay_in_bootloader != sectrue) {
+    // Wait until the touch controller is ready
+    // (on hardware this may take a while)
+    while (touch_ready() != sectrue) {
+      hal_delay(1);
+    }
+#ifdef TREZOR_EMULATOR
+    hal_delay(500);
+#endif
+    // Give the touch controller time to report events
+    // if someone touches the screen
+    for (int i = 0; i < 10; i++) {
+      if (touch_activity() == sectrue) {
+        touched = 1;
+        break;
+      }
+      hal_delay(5);
+    }
+  }
+#elif defined USE_BUTTON
+  button_read();
+  if (button_state_left() == 1) {
+    touched = 1;
+  }
+#endif
+
+  ensure(dont_optimize_out_true * (firmware_present == firmware_present_backup),
+         NULL);
+
+  // start the bootloader ...
+  // ... if user touched the screen on start
+  // ... or we have stay_in_bootloader flag to force it
+  // ... or strict upgrade was confirmed in the firmware (auto_upgrade flag)
+  // ... or there is no valid firmware
+  if (touched || stay_in_bootloader == sectrue || firmware_present != sectrue ||
+      auto_upgrade == sectrue) {
+    screen_t screen;
+    ui_set_initial_setup(true);
+    if (header_present == sectrue) {
+      if (auto_upgrade == sectrue) {
+        screen = SCREEN_WAIT_FOR_HOST;
+      } else {
+        ui_set_initial_setup(false);
+        screen = SCREEN_INTRO;
+      }
+
+    } else {
+      screen = SCREEN_WELCOME;
+
+#ifdef STM32U5
+      secret_bhk_regenerate();
+#endif
+      // erase storage
+      ensure(flash_area_erase_bulk(STORAGE_AREAS, STORAGE_AREAS_COUNT, NULL),
+             NULL);
+
+      // keep the model screen up for a while
+#ifndef USE_BACKLIGHT
+      hal_delay(1500);
+#else
+      // backlight fading takes some time so the explicit delay here is
+      // shorter
+      hal_delay(1000);
+#endif
+    }
+
+    while (true) {
+      volatile secbool continue_to_firmware = secfalse;
+      volatile secbool continue_to_firmware_backup = secfalse;
+      uint32_t ui_result = 0;
+
+      switch (screen) {
+        case SCREEN_WELCOME:
+
+          ui_screen_welcome();
+
+          // and start the usb loop
+          switch (bootloader_usb_loop(NULL, NULL)) {
+            case CONTINUE_TO_FIRMWARE:
+              continue_to_firmware = sectrue;
+              continue_to_firmware_backup = sectrue;
+              break;
+            case RETURN_TO_MENU:
+              break;
+            default:
+            case SHUTDOWN:
+              return 1;
+              break;
+          }
+          break;
+
+        case SCREEN_INTRO:
+          ui_result = ui_screen_intro(&vhdr, hdr, firmware_present);
+          if (ui_result == 1) {
+            screen = SCREEN_MENU;
+          }
+          if (ui_result == 2) {
+            screen = SCREEN_WAIT_FOR_HOST;
+          }
+          break;
+        case SCREEN_MENU:
+          ui_result = ui_screen_menu(firmware_present);
+          if (ui_result == 0xAABBCCDD) {  // exit menu
+            screen = SCREEN_INTRO;
+          }
+          if (ui_result == 0x11223344) {  // reboot
+#ifndef STM32U5
+            ui_screen_boot_stage_1(true);
+#endif
+            continue_to_firmware = firmware_present;
+            continue_to_firmware_backup = firmware_present_backup;
+          }
+          if (ui_result == 0x55667788) {  // wipe
+            screen = SCREEN_WIPE_CONFIRM;
+          }
+          break;
+        case SCREEN_WIPE_CONFIRM:
+          ui_result = screen_wipe_confirm();
+          if (ui_result == INPUT_CANCEL) {
+            // canceled
+            screen = SCREEN_MENU;
+          }
+          if (ui_result == INPUT_CONFIRM) {
+            ui_screen_wipe();
+            secbool r = bootloader_WipeDevice();
+            if (r != sectrue) {  // error
+              screen_wipe_fail();
+              return 1;
+            } else {  // success
+              screen_wipe_success();
+              return 1;
+            }
+          }
+          break;
+        case SCREEN_WAIT_FOR_HOST:
+          screen_connect(auto_upgrade == sectrue);
+          switch (bootloader_usb_loop(&vhdr, hdr)) {
+            case CONTINUE_TO_FIRMWARE:
+              continue_to_firmware = sectrue;
+              continue_to_firmware_backup = sectrue;
+              break;
+            case RETURN_TO_MENU:
+              screen = SCREEN_INTRO;
+              break;
+            case SHUTDOWN:
+              return 1;
+              break;
+            default:
+              break;
+          }
+          break;
+        default:
+          break;
+      }
+
+      if (continue_to_firmware != continue_to_firmware_backup) {
+        // erase storage if we saw flips randomly flip, most likely due to
+        // glitch
+
+#ifdef STM32U5
+        secret_bhk_regenerate();
+#endif
+        ensure(flash_area_erase_bulk(STORAGE_AREAS, STORAGE_AREAS_COUNT, NULL),
+               NULL);
+      }
+      ensure(dont_optimize_out_true *
+                 (continue_to_firmware == continue_to_firmware_backup),
+             NULL);
+      if (sectrue == continue_to_firmware) {
+#ifdef STM32U5
+        firmware_jump_fn = jump_to_fw_through_reset;
+#else
+        ui_screen_boot_stage_1(true);
+        firmware_jump_fn = real_jump_to_firmware;
+#endif
+        break;
+      }
+    }
+  }
+
+  ensure(dont_optimize_out_true * (firmware_present == firmware_present_backup),
+         NULL);
+
+#ifdef STM32U5
+  if (sectrue == firmware_present &&
+      firmware_jump_fn != jump_to_fw_through_reset) {
+    firmware_jump_fn = real_jump_to_firmware;
+  }
+#else
+  if (sectrue == firmware_present) {
+    firmware_jump_fn = real_jump_to_firmware;
+  }
+#endif
+
+  firmware_jump_fn();
 
   return 0;
 }
-
-void HardFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(HF)"); }

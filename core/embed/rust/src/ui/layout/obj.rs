@@ -2,6 +2,7 @@ use core::{
     cell::RefCell,
     convert::{TryFrom, TryInto},
 };
+use num_traits::{FromPrimitive, ToPrimitive};
 
 use crate::{
     error::Error,
@@ -9,6 +10,7 @@ use crate::{
     micropython::{
         buffer::StrBuffer,
         gc::Gc,
+        macros::{obj_dict, obj_fn_1, obj_fn_2, obj_fn_3, obj_fn_var, obj_map, obj_type},
         map::Map,
         obj::{Obj, ObjBase},
         qstr::Qstr,
@@ -17,18 +19,47 @@ use crate::{
     },
     time::Duration,
     ui::{
-        component::{Child, Component, Event, EventCtx, Never, TimerToken},
+        button_request::ButtonRequest,
+        component::{Component, Event, EventCtx, Never, Root, TimerToken},
         constant,
         display::sync,
         geometry::Rect,
     },
 };
 
+use crate::ui::component::base::AttachType;
+#[cfg(feature = "new_rendering")]
+use crate::ui::{display::Color, shape::render_on_display};
+
 #[cfg(feature = "button")]
 use crate::ui::event::ButtonEvent;
-#[cfg(feature = "touch")]
-use crate::ui::event::TouchEvent;
 use crate::ui::event::USBEvent;
+#[cfg(feature = "touch")]
+use crate::ui::{component::SwipeDirection, event::TouchEvent};
+
+impl AttachType {
+    fn to_obj(self) -> Obj {
+        match self {
+            Self::Initial => Obj::const_none(),
+            #[cfg(feature = "touch")]
+            Self::Swipe(dir) => dir.to_u8().into(),
+        }
+    }
+    fn try_from_obj(obj: Obj) -> Result<Self, Error> {
+        if obj == Obj::const_none() {
+            return Ok(Self::Initial);
+        }
+        #[cfg(feature = "touch")]
+        {
+            let dir: u8 = obj.try_into()?;
+            return Ok(AttachType::Swipe(
+                SwipeDirection::from_u8(dir).ok_or(Error::TypeError)?,
+            ));
+        }
+        #[allow(unreachable_code)]
+        Err(Error::TypeError)
+    }
+}
 
 /// Conversion trait implemented by components that know how to convert their
 /// message values into MicroPython `Obj`s.
@@ -49,9 +80,12 @@ pub trait ObjComponent: MaybeTrace {
     fn obj_paint(&mut self) -> bool;
     fn obj_bounds(&self, _sink: &mut dyn FnMut(Rect)) {}
     fn obj_skip_paint(&mut self) {}
+    fn obj_request_clear(&mut self) {}
+    fn obj_delete(&mut self) {}
+    fn obj_get_transition_out(&self) -> Result<Obj, Error>;
 }
 
-impl<T> ObjComponent for Child<T>
+impl<T> ObjComponent for Root<T>
 where
     T: ComponentMsgObj + MaybeTrace,
 {
@@ -61,16 +95,31 @@ where
 
     fn obj_event(&mut self, ctx: &mut EventCtx, event: Event) -> Result<Obj, Error> {
         if let Some(msg) = self.event(ctx, event) {
-            self.inner().msg_try_into_obj(msg)
+            self.inner().inner().msg_try_into_obj(msg)
         } else {
             Ok(Obj::const_none())
         }
     }
 
     fn obj_paint(&mut self) -> bool {
-        let will_paint = self.will_paint();
-        self.paint();
-        will_paint
+        #[cfg(not(feature = "new_rendering"))]
+        {
+            let will_paint = self.inner().will_paint();
+            self.paint();
+            will_paint
+        }
+
+        #[cfg(feature = "new_rendering")]
+        {
+            let will_paint = self.inner().will_paint();
+            if will_paint {
+                render_on_display(None, Some(Color::black()), |target| {
+                    self.render(target);
+                });
+                self.skip_paint();
+            }
+            will_paint
+        }
     }
 
     #[cfg(feature = "ui_bounds")]
@@ -80,6 +129,22 @@ where
 
     fn obj_skip_paint(&mut self) {
         self.skip_paint()
+    }
+
+    fn obj_request_clear(&mut self) {
+        self.clear_screen()
+    }
+
+    fn obj_delete(&mut self) {
+        self.delete()
+    }
+
+    fn obj_get_transition_out(&self) -> Result<Obj, Error> {
+        if let Some(msg) = self.get_transition_out() {
+            Ok(msg.to_obj())
+        } else {
+            Ok(Obj::const_none())
+        }
     }
 }
 
@@ -101,23 +166,34 @@ struct LayoutObjInner {
 
 impl LayoutObj {
     /// Create a new `LayoutObj`, wrapping a root component.
+    #[inline(never)]
     pub fn new(root: impl ComponentMsgObj + MaybeTrace + 'static) -> Result<Gc<Self>, Error> {
-        // Let's wrap the root component into a `Child` to maintain the top-level
+        // Let's wrap the root component into a `Root` to maintain the top-level
         // invalidation logic.
-        let wrapped_root = Child::new(root);
+        let wrapped_root = Root::new(root);
         // SAFETY: We are coercing GC-allocated sized ptr into an unsized one.
         let root =
             unsafe { Gc::from_raw(Gc::into_raw(Gc::new(wrapped_root)?) as *mut dyn ObjComponent) };
 
-        Gc::new(Self {
-            base: Self::obj_type().as_base(),
-            inner: RefCell::new(LayoutObjInner {
-                root,
-                event_ctx: EventCtx::new(),
-                timer_fn: Obj::const_none(),
-                page_count: 1,
-            }),
-        })
+        // SAFETY: This is a Python object and hase a base as first element
+        unsafe {
+            Gc::new_with_custom_finaliser(Self {
+                base: Self::obj_type().as_base(),
+                inner: RefCell::new(LayoutObjInner {
+                    root,
+                    event_ctx: EventCtx::new(),
+                    timer_fn: Obj::const_none(),
+                    page_count: 1,
+                }),
+            })
+        }
+    }
+
+    pub fn obj_delete(&self) {
+        let mut inner = self.inner.borrow_mut();
+
+        // SAFETY: `inner.root` is unique because of the `inner.borrow_mut()`.
+        unsafe { Gc::as_mut(&mut inner.root) }.obj_delete();
     }
 
     pub fn skip_first_paint(&self) {
@@ -174,6 +250,12 @@ impl LayoutObj {
         Ok(msg)
     }
 
+    fn obj_request_clear(&self) {
+        let mut inner = self.inner.borrow_mut();
+        // SAFETY: `inner.root` is unique because of the `inner.borrow_mut()`.
+        unsafe { Gc::as_mut(&mut inner.root) }.obj_request_clear();
+    }
+
     /// Run a paint pass over the component tree. Returns true if any component
     /// actually requested painting since last invocation of the function.
     fn obj_paint_if_requested(&self) -> bool {
@@ -219,6 +301,25 @@ impl LayoutObj {
         self.inner.borrow().page_count.into()
     }
 
+    fn obj_button_request(&self) -> Result<Obj, Error> {
+        let inner = &mut *self.inner.borrow_mut();
+
+        match inner.event_ctx.button_request() {
+            None => Ok(Obj::const_none()),
+            Some(ButtonRequest { code, br_type }) => {
+                (code.num().into(), br_type.try_into()?).try_into()
+            }
+        }
+    }
+
+    fn obj_get_transition_out(&self) -> Result<Obj, Error> {
+        let inner = &mut *self.inner.borrow_mut();
+
+        // Get transition out result
+        // SAFETY: `inner.root` is unique because of the `inner.borrow_mut()`.
+        unsafe { Gc::as_mut(&mut inner.root) }.obj_get_transition_out()
+    }
+
     #[cfg(feature = "ui_debug")]
     fn obj_bounds(&self) {
         use crate::ui::display;
@@ -238,9 +339,9 @@ impl LayoutObj {
 
     fn obj_type() -> &'static Type {
         static TYPE: Type = obj_type! {
-            name: Qstr::MP_QSTR_Layout,
+            name: Qstr::MP_QSTR_LayoutObj,
             locals: &obj_dict!(obj_map! {
-                Qstr::MP_QSTR_attach_timer_fn => obj_fn_2!(ui_layout_attach_timer_fn).as_obj(),
+                Qstr::MP_QSTR_attach_timer_fn => obj_fn_3!(ui_layout_attach_timer_fn).as_obj(),
                 Qstr::MP_QSTR_touch_event => obj_fn_var!(4, 4, ui_layout_touch_event).as_obj(),
                 Qstr::MP_QSTR_button_event => obj_fn_var!(3, 3, ui_layout_button_event).as_obj(),
                 Qstr::MP_QSTR_progress_event => obj_fn_var!(3, 3, ui_layout_progress_event).as_obj(),
@@ -250,7 +351,10 @@ impl LayoutObj {
                 Qstr::MP_QSTR_request_complete_repaint => obj_fn_1!(ui_layout_request_complete_repaint).as_obj(),
                 Qstr::MP_QSTR_trace => obj_fn_2!(ui_layout_trace).as_obj(),
                 Qstr::MP_QSTR_bounds => obj_fn_1!(ui_layout_bounds).as_obj(),
+                Qstr::MP_QSTR___del__ => obj_fn_1!(ui_layout_delete).as_obj(),
                 Qstr::MP_QSTR_page_count => obj_fn_1!(ui_layout_page_count).as_obj(),
+                Qstr::MP_QSTR_button_request => obj_fn_1!(ui_layout_button_request).as_obj(),
+                Qstr::MP_QSTR_get_transition_out => obj_fn_1!(ui_layout_get_transition_out).as_obj(),
             }),
         };
         &TYPE
@@ -317,11 +421,12 @@ impl TryFrom<Never> for Obj {
     }
 }
 
-extern "C" fn ui_layout_attach_timer_fn(this: Obj, timer_fn: Obj) -> Obj {
+extern "C" fn ui_layout_attach_timer_fn(this: Obj, timer_fn: Obj, attach_type: Obj) -> Obj {
     let block = || {
         let this: Gc<LayoutObj> = this.try_into()?;
         this.obj_set_timer_fn(timer_fn);
-        let msg = this.obj_event(Event::Attach)?;
+
+        let msg = this.obj_event(Event::Attach(AttachType::try_from_obj(attach_type)?))?;
         assert!(msg == Obj::const_none());
         Ok(Obj::const_none())
     };
@@ -378,7 +483,7 @@ extern "C" fn ui_layout_progress_event(n_args: usize, args: *const Obj) -> Obj {
         let this: Gc<LayoutObj> = args[0].try_into()?;
         let value: u16 = args[1].try_into()?;
         let description: StrBuffer = args[2].try_into()?;
-        let msg = this.obj_event(Event::Progress(value, description.as_ref()))?;
+        let msg = this.obj_event(Event::Progress(value, description.into()))?;
         Ok(msg)
     };
     unsafe { util::try_with_args_and_kwargs(n_args, args, &Map::EMPTY, block) }
@@ -425,8 +530,9 @@ extern "C" fn ui_layout_request_complete_repaint(this: Obj) -> Obj {
             // Messages raised during a `RequestPaint` dispatch are not propagated, let's
             // make sure we don't do that.
             #[cfg(feature = "ui_debug")]
-            panic!("cannot raise messages during RequestPaint");
+            fatal_error!("Cannot raise messages during RequestPaint");
         };
+        this.obj_request_clear();
         Ok(Obj::const_none())
     };
     unsafe { util::try_or_raise(block) }
@@ -436,6 +542,22 @@ extern "C" fn ui_layout_page_count(this: Obj) -> Obj {
     let block = || {
         let this: Gc<LayoutObj> = this.try_into()?;
         Ok(this.obj_page_count())
+    };
+    unsafe { util::try_or_raise(block) }
+}
+
+extern "C" fn ui_layout_button_request(this: Obj) -> Obj {
+    let block = || {
+        let this: Gc<LayoutObj> = this.try_into()?;
+        this.obj_button_request()
+    };
+    unsafe { util::try_or_raise(block) }
+}
+
+extern "C" fn ui_layout_get_transition_out(this: Obj) -> Obj {
+    let block = || {
+        let this: Gc<LayoutObj> = this.try_into()?;
+        this.obj_get_transition_out()
     };
     unsafe { util::try_or_raise(block) }
 }
@@ -474,4 +596,13 @@ extern "C" fn ui_layout_bounds(this: Obj) -> Obj {
 #[cfg(not(feature = "ui_bounds"))]
 extern "C" fn ui_layout_bounds(_this: Obj) -> Obj {
     Obj::const_none()
+}
+
+extern "C" fn ui_layout_delete(this: Obj) -> Obj {
+    let block = || {
+        let this: Gc<LayoutObj> = this.try_into()?;
+        this.obj_delete();
+        Ok(Obj::const_none())
+    };
+    unsafe { util::try_or_raise(block) }
 }

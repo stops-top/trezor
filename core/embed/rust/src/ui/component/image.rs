@@ -1,14 +1,13 @@
-use crate::{
-    trezorhal::display::ToifFormat,
-    ui::{
-        component::{Component, Event, EventCtx, Never},
-        display,
-        display::{
-            toif::{image, Toif},
-            Color, Icon,
-        },
-        geometry::{Alignment2D, Offset, Point, Rect},
+use crate::ui::{
+    component::{Component, Event, EventCtx, Never},
+    display,
+    display::{
+        toif::{image, Toif, ToifFormat},
+        Color, Icon,
     },
+    geometry::{Alignment2D, Offset, Point, Rect},
+    shape,
+    shape::Renderer,
 };
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -49,6 +48,12 @@ impl Component for Image {
 
     fn paint(&mut self) {
         self.draw(self.area.center(), Alignment2D::CENTER);
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        shape::ToifImage::new(self.area.center(), self.toif)
+            .with_align(Alignment2D::CENTER)
+            .render(target);
     }
 
     #[cfg(feature = "ui_bounds")]
@@ -131,6 +136,15 @@ impl Component for BlendedImage {
 
     fn paint(&mut self) {
         self.paint_image();
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        shape::ToifImage::new(self.bg_top_left, self.bg.toif)
+            .with_fg(self.bg_color)
+            .render(target);
+        shape::ToifImage::new(self.bg_top_left + self.fg_offset, self.fg.toif)
+            .with_fg(self.fg_color)
+            .render(target);
     }
 
     #[cfg(feature = "ui_bounds")]

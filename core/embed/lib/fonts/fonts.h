@@ -20,6 +20,8 @@
 #ifndef _FONTS_H
 #define _FONTS_H
 
+#include <stdbool.h>
+
 #include "fonts/font_bitmap.h"
 #include TREZOR_BOARD
 
@@ -62,6 +64,15 @@
   FONT_DEFINE(TREZOR_FONT_DEMIBOLD_ENABLE, _BASELINE)
 #endif
 
+#ifdef TREZOR_FONT_SUB_ENABLE
+#include TREZOR_FONT_SUB_INCLUDE
+#define FONT_SUB (-8)
+#define FONT_SUB_DATA TREZOR_FONT_SUB_ENABLE
+#define FONT_SUB_HEIGHT FONT_DEFINE(TREZOR_FONT_SUB_ENABLE, _HEIGHT)
+#define FONT_SUB_MAX_HEIGHT FONT_DEFINE(TREZOR_FONT_SUB_ENABLE, _MAX_HEIGHT)
+#define FONT_SUB_BASELINE FONT_DEFINE(TREZOR_FONT_SUB_ENABLE, _BASELINE)
+#endif
+
 #ifdef TREZOR_FONT_MONO_ENABLE
 #include TREZOR_FONT_MONO_INCLUDE
 #define FONT_MONO (-3)
@@ -78,6 +89,30 @@
 #define FONT_BOLD_HEIGHT FONT_DEFINE(TREZOR_FONT_BOLD_ENABLE, _HEIGHT)
 #define FONT_BOLD_MAX_HEIGHT FONT_DEFINE(TREZOR_FONT_BOLD_ENABLE, _MAX_HEIGHT)
 #define FONT_BOLD_BASELINE FONT_DEFINE(TREZOR_FONT_BOLD_ENABLE, _BASELINE)
+#endif
+
+#ifdef TREZOR_FONT_NORMAL_UPPER_ENABLE
+#include TREZOR_FONT_NORMAL_UPPER_INCLUDE
+#define FONT_NORMAL_UPPER (-6)
+#define FONT_NORMAL_UPPER_DATA TREZOR_FONT_NORMAL_UPPER_ENABLE
+#define FONT_NORMAL_UPPER_HEIGHT \
+  FONT_DEFINE(TREZOR_FONT_NORMAL_UPPER_ENABLE, _HEIGHT)
+#define FONT_NORMAL_UPPER_MAX_HEIGHT \
+  FONT_DEFINE(TREZOR_FONT_NORMAL_UPPER_ENABLE, _MAX_HEIGHT)
+#define FONT_NORMAL_UPPER_BASELINE \
+  FONT_DEFINE(TREZOR_FONT_NORMAL_UPPER_ENABLE, _BASELINE)
+#endif
+
+#ifdef TREZOR_FONT_BOLD_UPPER_ENABLE
+#include TREZOR_FONT_BOLD_UPPER_INCLUDE
+#define FONT_BOLD_UPPER (-7)
+#define FONT_BOLD_UPPER_DATA TREZOR_FONT_BOLD_UPPER_ENABLE
+#define FONT_BOLD_UPPER_HEIGHT \
+  FONT_DEFINE(TREZOR_FONT_BOLD_UPPER_ENABLE, _HEIGHT)
+#define FONT_BOLD_UPPER_MAX_HEIGHT \
+  FONT_DEFINE(TREZOR_FONT_BOLD_UPPER_ENABLE, _MAX_HEIGHT)
+#define FONT_BOLD_UPPER_BASELINE \
+  FONT_DEFINE(TREZOR_FONT_BOLD_UPPER_ENABLE, _BASELINE)
 #endif
 
 #define MAX_FONT_H(A, B) ((A) > (B) ? (A) : (B))
@@ -108,15 +143,47 @@
 #define FONT_MAX_HEIGHT_5 FONT_MAX_HEIGHT_4
 #endif
 
-#ifdef TREZOR_FONT_MONO_ENABLE
-#define FONT_MAX_HEIGHT MAX_FONT_H(FONT_MONO_MAX_HEIGHT, FONT_MAX_HEIGHT_5)
+#ifdef TREZOR_FONT_NORMAL_UPPER_ENABLE
+#define FONT_MAX_HEIGHT_6 \
+  MAX_FONT_H(FONT_NORMAL_UPPER_MAX_HEIGHT, FONT_MAX_HEIGHT_5)
 #else
-#define FONT_MAX_HEIGHT FONT_MAX_HEIGHT_5
+#define FONT_MAX_HEIGHT_6 FONT_MAX_HEIGHT_5
+#endif
+
+#ifdef TREZOR_FONT_BOLD_UPPER_ENABLE
+#define FONT_MAX_HEIGHT_7 \
+  MAX_FONT_H(FONT_BOLD_UPPER_MAX_HEIGHT, FONT_MAX_HEIGHT_6)
+#else
+#define FONT_MAX_HEIGHT_7 FONT_MAX_HEIGHT_6
+#endif
+
+#ifdef TREZOR_FONT_SUB_ENABLE
+#define FONT_MAX_HEIGHT_8 MAX_FONT_H(FONT_SUB_MAX_HEIGHT, FONT_MAX_HEIGHT_7)
+#else
+#define FONT_MAX_HEIGHT_8 FONT_MAX_HEIGHT_7
+#endif
+
+#ifdef TREZOR_FONT_MONO_ENABLE
+#define FONT_MAX_HEIGHT MAX_FONT_H(FONT_MONO_MAX_HEIGHT, FONT_MAX_HEIGHT_8)
+#else
+#define FONT_MAX_HEIGHT FONT_MAX_HEIGHT_8
 #endif
 
 int font_height(int font);
 int font_max_height(int font);
 int font_baseline(int font);
-const uint8_t *font_get_glyph(int font, uint8_t c);
+const uint8_t *font_get_glyph(int font, uint16_t c);
+const uint8_t *font_nonprintable_glyph(int font);
+
+typedef struct {
+  const int font;
+  const uint8_t *text;
+  int remaining;
+} font_glyph_iter_t;
+
+font_glyph_iter_t font_glyph_iter_init(const int font, const uint8_t *text,
+                                       const int len);
+bool font_next_glyph(font_glyph_iter_t *iter, const uint8_t **out);
+int font_text_width(int font, const char *text, int textlen);
 
 #endif  //_FONTS_H

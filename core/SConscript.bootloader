@@ -1,12 +1,14 @@
 # pylint: disable=E0602
 
 import os
-import tools
+import tools, models
 
 TREZOR_MODEL = ARGUMENTS.get('TREZOR_MODEL', 'T')
 CMAKELISTS = int(ARGUMENTS.get('CMAKELISTS', 0))
 BOOTLOADER_QA = ARGUMENTS.get('BOOTLOADER_QA', '0') == '1'
 PRODUCTION = 0 if BOOTLOADER_QA else ARGUMENTS.get('PRODUCTION', '0') == '1'
+HW_REVISION = ARGUMENTS.get('HW_REVISION', None)
+NEW_RENDERING = ARGUMENTS.get('NEW_RENDERING', '1') == '1'
 
 if TREZOR_MODEL in ('1', ):
     # skip bootloader build
@@ -20,12 +22,16 @@ if TREZOR_MODEL in ('1', ):
              )
     Return()
 
-FEATURES_WANTED = ["input", "rgb_led", "consumption_mask", "usb", "optiga"]
+FEATURES_WANTED = ["input", "rgb_led", "consumption_mask", "usb", "optiga", "dma2d"]
+
+if NEW_RENDERING:
+    FEATURES_WANTED.append("new_rendering")
 
 CCFLAGS_MOD = ''
 CPPPATH_MOD = []
 CPPDEFINES_MOD = []
 SOURCE_MOD = []
+SOURCE_MOD_CRYPTO = []
 CPPDEFINES_HAL = []
 SOURCE_HAL = []
 PATH_HAL = []
@@ -35,13 +41,28 @@ if TREZOR_MODEL in ('R', ):
     FONT_DEMIBOLD='Font_PixelOperator_Regular_8'
     FONT_BOLD='Font_PixelOperator_Bold_8'
     FONT_MONO='Font_PixelOperator_Regular_8'
-    FONT_BIG=None
-elif TREZOR_MODEL in ('T', 'DISC1'):
+    FONT_BIG='Font_PixelOperator_Regular_8'
+    FONT_NORMAL_UPPER=None
+    FONT_BOLD_UPPER=None
+    FONT_SUB=None
+elif TREZOR_MODEL in ('T', 'DISC1', 'DISC2'):
     FONT_NORMAL='Font_TTHoves_Regular_21'
-    FONT_DEMIBOLD=None
-    FONT_BOLD='Font_TTHoves_Bold_17'
-    FONT_MONO=None
+    FONT_DEMIBOLD='Font_TTHoves_Regular_21'
+    FONT_BOLD='Font_TTHoves_Bold_17_upper'
+    FONT_MONO='Font_TTHoves_Regular_21'
     FONT_BIG=None
+    FONT_NORMAL_UPPER=None
+    FONT_BOLD_UPPER='Font_TTHoves_Bold_17_upper'
+    FONT_SUB=None
+elif TREZOR_MODEL in ('T3T1',):
+    FONT_NORMAL='Font_TTSatoshi_DemiBold_21'
+    FONT_DEMIBOLD='Font_TTSatoshi_DemiBold_21'
+    FONT_BOLD='Font_TTHoves_Bold_17_upper'
+    FONT_MONO='Font_TTSatoshi_DemiBold_21'
+    FONT_BIG=None
+    FONT_NORMAL_UPPER=None
+    FONT_BOLD_UPPER='Font_TTHoves_Bold_17_upper'
+    FONT_SUB=None
 
 # modtrezorcrypto
 CCFLAGS_MOD += '-Wno-sequence-point '
@@ -59,6 +80,9 @@ CPPDEFINES_MOD += [
 ]
 
 SOURCE_MOD += [
+    'vendor/trezor-storage/flash_area.c',
+]
+SOURCE_MOD_CRYPTO = [
     'vendor/trezor-crypto/blake2s.c',
     'vendor/trezor-crypto/chacha_drbg.c',
     'vendor/trezor-crypto/chacha20poly1305/chacha_merged.c',
@@ -79,34 +103,41 @@ CPPPATH_MOD += [
 ]
 
 SOURCE_MOD += [
-    'embed/lib/mini_printf.c',
-    'embed/lib/unit_variant.c',
+    'embed/extmod/modtrezorcrypto/rand.c',
     'embed/lib/buffers.c',
     'embed/lib/colors.c',
-    'embed/lib/display.c',
-    'embed/lib/fonts/fonts.c',
+    'embed/lib/display_utils.c',
+    'embed/lib/error_handling.c',
     'embed/lib/fonts/font_bitmap.c',
+    'embed/lib/fonts/fonts.c',
+    'embed/lib/gfx_color.c',
+    'embed/lib/gfx_bitblt_mono8.c',
+    'embed/lib/gfx_bitblt_rgb565.c',
+    'embed/lib/gfx_bitblt_rgba8888.c',
     'embed/lib/image.c',
-    'embed/extmod/modtrezorcrypto/rand.c',
+    'embed/lib/mini_printf.c',
+    'embed/lib/terminal.c',
+    'embed/lib/unit_variant.c',
     'vendor/micropython/lib/uzlib/adler32.c',
     'vendor/micropython/lib/uzlib/crc32.c',
     'vendor/micropython/lib/uzlib/tinflate.c',
-    'vendor/trezor-storage/flash_common.c',
 ]
+
+if NEW_RENDERING:
+    CPPDEFINES_MOD += ['NEW_RENDERING']
+    SOURCE_MOD += [
+        'embed/lib/gfx_draw.c',
+    ]
+else:
+    SOURCE_MOD += [
+        'embed/lib/display_draw.c',
+    ]
+
 
 SOURCE_NANOPB = [
     'vendor/nanopb/pb_common.c',
     'vendor/nanopb/pb_decode.c',
     'vendor/nanopb/pb_encode.c',
-]
-
-SOURCE_BOOTLOADER = [
-    'embed/bootloader/startup.s',
-    'embed/bootloader/header.S',
-    'embed/bootloader/bootui.c',
-    'embed/bootloader/main.c',
-    'embed/bootloader/messages.c',
-    'embed/bootloader/protob/messages.pb.c',
 ]
 
 # fonts
@@ -115,10 +146,30 @@ tools.add_font('BOLD', FONT_BOLD, CPPDEFINES_MOD, SOURCE_MOD)
 tools.add_font('DEMIBOLD', FONT_DEMIBOLD, CPPDEFINES_MOD, SOURCE_MOD)
 tools.add_font('MONO', FONT_MONO, CPPDEFINES_MOD, SOURCE_MOD)
 tools.add_font('BIG', FONT_BIG, CPPDEFINES_MOD, SOURCE_MOD)
+tools.add_font('NORMAL_UPPER', FONT_NORMAL_UPPER, CPPDEFINES_MOD, SOURCE_MOD)
+tools.add_font('BOLD_UPPER', FONT_BOLD_UPPER, CPPDEFINES_MOD, SOURCE_MOD)
+tools.add_font('SUB', FONT_SUB, CPPDEFINES_MOD, SOURCE_MOD)
 
-env = Environment(ENV=os.environ, CFLAGS=f"{ARGUMENTS.get('CFLAGS', '')} -DPRODUCTION={int(PRODUCTION)} -DBOOTLOADER_QA={int(BOOTLOADER_QA)}")
+env = Environment(
+    ENV=os.environ,
+    CFLAGS=f"{ARGUMENTS.get('CFLAGS', '')} -DPRODUCTION={int(PRODUCTION)} -DBOOTLOADER_QA={int(BOOTLOADER_QA)}",
+    CPPDEFINES_IMPLICIT=[]
+    )
 
-FEATURES_AVAILABLE = tools.configure_board(TREZOR_MODEL, FEATURES_WANTED, env, CPPDEFINES_HAL, SOURCE_HAL, PATH_HAL)
+FEATURES_AVAILABLE = models.configure_board(TREZOR_MODEL, HW_REVISION, FEATURES_WANTED, env, CPPDEFINES_HAL, SOURCE_HAL, PATH_HAL)
+
+FILE_SUFFIX= env.get('ENV')['SUFFIX']
+LINKER_SCRIPT_SUFFIX= env.get('ENV')['LINKER_SCRIPT']
+
+SOURCE_BOOTLOADER = [
+    f'embed/bootloader/startup_{FILE_SUFFIX}.s',
+    'embed/bootloader/header.S',
+    'embed/bootloader/bootui.c',
+    'embed/bootloader/main.c',
+    'embed/bootloader/messages.c',
+    'embed/bootloader/protob/messages.pb.c',
+]
+
 
 env.Replace(
     CP='cp',
@@ -135,19 +186,7 @@ env.Replace(
 env.Replace(
     TREZOR_MODEL=TREZOR_MODEL, )
 
-env.Replace(
-    COPT=env.get('ENV').get('OPTIMIZE', '-Os'),
-    CCFLAGS='$COPT '
-    '-g3 '
-    '-nostdlib '
-    '-std=gnu99 -Wall -Werror -Wdouble-promotion -Wpointer-arith -Wno-missing-braces -fno-common '
-    '-fsingle-precision-constant -fdata-sections -ffunction-sections '
-    '-ffreestanding '
-    '-fstack-protector-all '
-    +  env.get('ENV')["CPU_CCFLAGS"] + CCFLAGS_MOD,
-    CCFLAGS_QSTR='-DNO_QSTR -DN_X64 -DN_X86 -DN_THUMB',
-    LINKFLAGS='-T embed/bootloader/memory.ld -Wl,--gc-sections -Wl,-Map=build/bootloader/bootloader.map -Wl,--warn-common -Wl,--print-memory-usage',
-    CPPPATH=[
+ALLPATHS = [
         'embed/rust',
         'embed/bootloader',
         'embed/bootloader/nanopb',
@@ -156,9 +195,22 @@ env.Replace(
         'embed/models',
         'embed/trezorhal',
         'embed/extmod/modtrezorui',
-        'vendor/micropython/lib/cmsis/inc',
         'vendor/nanopb',
-    ] + CPPPATH_MOD + PATH_HAL,
+    ] + CPPPATH_MOD + PATH_HAL
+
+env.Replace(
+    COPT=env.get('ENV').get('OPTIMIZE', '-Os'),
+    CCFLAGS='$COPT '
+    '-g3 '
+    '-nostdlib '
+    '-std=gnu11 -Wall -Werror -Wdouble-promotion -Wpointer-arith -Wno-missing-braces -fno-common '
+    '-fsingle-precision-constant -fdata-sections -ffunction-sections '
+    '-ffreestanding '
+    '-fstack-protector-strong '
+    +  env.get('ENV')["CPU_CCFLAGS"] + CCFLAGS_MOD,
+    CCFLAGS_QSTR='-DNO_QSTR -DN_X64 -DN_X86 -DN_THUMB',
+    LINKFLAGS=f'-T embed/bootloader/memory_{LINKER_SCRIPT_SUFFIX}.ld -Wl,--gc-sections -Wl,-Map=build/bootloader/bootloader.map -Wl,--warn-common -Wl,--print-memory-usage',
+    CPPPATH=ALLPATHS,
     CPPDEFINES=[
         'BOOTLOADER',
         'TREZOR_MODEL_'+TREZOR_MODEL,
@@ -176,8 +228,8 @@ env.Replace(
 )
 
 env.Replace(
-    ALLSOURCES=SOURCE_MOD + SOURCE_BOOTLOADER + SOURCE_NANOPB + SOURCE_HAL,
-    ALLDEFS=tools.get_defs_for_cmake(env['CPPDEFINES'] + [f"PRODUCTION={int(PRODUCTION)}", f"BOOTLOADER_QA={int(BOOTLOADER_QA)}"]))
+    ALLSOURCES=SOURCE_MOD + SOURCE_MOD_CRYPTO + SOURCE_BOOTLOADER + SOURCE_NANOPB + SOURCE_HAL,
+    ALLDEFS=tools.get_defs_for_cmake(env['CPPDEFINES'] + env['CPPDEFINES_IMPLICIT'] + [f"PRODUCTION={int(PRODUCTION)}", f"BOOTLOADER_QA={int(BOOTLOADER_QA)}"]))
 
 cmake_gen = env.Command(
     target='CMakeLists.txt',
@@ -205,12 +257,16 @@ def cargo_build():
         features = ["model_t1"]
     elif TREZOR_MODEL in ("R",):
         features = ["model_tr"]
+    elif TREZOR_MODEL in ("T3T1",):
+        features = ["model_mercury"]
     else:
         features = ["model_tt"]
-    features.append("bitcoin_only")
     features.append("ui")
     features.append("bootloader")
     features.extend(FEATURES_AVAILABLE)
+
+    if NEW_RENDERING:
+        features.append('new_rendering')
 
     cargo_opts = [
         f'--target={env.get("ENV")["RUST_TARGET"]}',
@@ -221,7 +277,9 @@ def cargo_build():
         '-Z build-std-features=panic_immediate_abort',
     ]
 
-    return f'cd embed/rust; cargo build {profile} ' + ' '.join(cargo_opts)
+    bindgen_macros = tools.get_bindgen_defines(env.get("CPPDEFINES"), ALLPATHS)
+
+    return f'export BINDGEN_MACROS=\'{bindgen_macros}\'; cd embed/rust; cargo build {profile} ' + ' '.join(cargo_opts)
 
 rust = env.Command(
     target=RUST_LIBPATH,
@@ -237,6 +295,7 @@ env.Append(LINKFLAGS=f' -l{RUST_LIB}')
 
 obj_program = []
 obj_program += env.Object(source=SOURCE_MOD)
+obj_program += env.Object(source=SOURCE_MOD_CRYPTO, CCFLAGS='$CCFLAGS -ftrivial-auto-var-init=zero')
 obj_program += env.Object(source=SOURCE_BOOTLOADER)
 obj_program += env.Object(source=SOURCE_NANOPB)
 obj_program += env.Object(source=SOURCE_HAL)
@@ -253,7 +312,7 @@ env.Depends(program_elf, rust)
 
 SUFFIX = '_qa' if BOOTLOADER_QA else ''
 
-BINARY_NAME = f"build/bootloader/bootloader-{tools.get_model_identifier(TREZOR_MODEL)}{SUFFIX}"
+BINARY_NAME = f"build/bootloader/bootloader-{models.get_model_identifier(TREZOR_MODEL)}{SUFFIX}"
 BINARY_NAME += "-" + tools.get_version('embed/bootloader/version.h')
 BINARY_NAME += "-" + tools.get_git_revision_short_hash()
 BINARY_NAME += "-dirty" if tools.get_git_modified() else ""
@@ -266,7 +325,7 @@ program_bin = env.Command(
     target='bootloader.bin',
     source=program_elf,
     action=[
-        '$OBJCOPY -O binary -j .header -j .flash -j .data $SOURCE $TARGET',
+        '$OBJCOPY -O binary -j .header -j .flash -j .data -j .confidential $SOURCE $TARGET',
         '$HEADERTOOL $TARGET ' + ('-D' if not PRODUCTION else ''),
         '$CP $TARGET ' + BINARY_NAME,
     ], )

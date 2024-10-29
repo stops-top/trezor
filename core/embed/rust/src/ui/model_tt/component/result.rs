@@ -1,11 +1,13 @@
 use crate::{
-    strutil::StringType,
+    strutil::TString,
     ui::{
         component::{text::TextStyle, Child, Component, Event, EventCtx, Label, Never, Pad},
         constant::screen,
         display::{self, Color, Font, Icon},
         geometry::{Alignment2D, Insets, Offset, Point, Rect},
         model_tt::theme::FG,
+        shape,
+        shape::Renderer,
     },
 };
 
@@ -37,25 +39,27 @@ impl ResultStyle {
     }
 
     pub const fn title_style(&self) -> TextStyle {
-        TextStyle::new(Font::BOLD, self.fg_color, self.bg_color, FG, FG)
+        TextStyle::new(Font::BOLD_UPPER, self.fg_color, self.bg_color, FG, FG)
     }
 }
 
-pub struct ResultFooter<'a, T> {
+pub struct ResultFooter<'a> {
     style: &'a ResultStyle,
-    text: Label<T>,
+    text: Label<'a>,
     area: Rect,
 }
 
-impl<'a, T: AsRef<str>> ResultFooter<'a, T> {
-    pub fn new(text: T, style: &'a ResultStyle) -> Self {
+impl<'a> ResultFooter<'a> {
+    pub fn new(text: Label<'a>, style: &'a ResultStyle) -> Self {
         Self {
             style,
-            text: Label::centered(text, style.title_style()).vertically_centered(),
+            text,
             area: Rect::zero(),
         }
     }
+}
 
+impl ResultFooter<'_> {
     pub const fn split_bounds() -> (Rect, Rect) {
         let main_area = Rect::new(
             Point::new(RESULT_PADDING, 0),
@@ -69,13 +73,17 @@ impl<'a, T: AsRef<str>> ResultFooter<'a, T> {
     }
 }
 
-impl<T: AsRef<str>> Component for ResultFooter<'_, T> {
+impl Component for ResultFooter<'_> {
     type Msg = Never;
 
     fn place(&mut self, bounds: Rect) -> Rect {
         self.area = bounds;
         self.text.place(bounds);
         bounds
+    }
+
+    fn event(&mut self, _ctx: &mut EventCtx, _event: Event) -> Option<Self::Msg> {
+        None
     }
 
     fn paint(&mut self) {
@@ -90,26 +98,36 @@ impl<T: AsRef<str>> Component for ResultFooter<'_, T> {
         self.text.paint();
     }
 
-    fn event(&mut self, _ctx: &mut EventCtx, _event: Event) -> Option<Self::Msg> {
-        None
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        // divider line
+        let bar = Rect::from_center_and_size(
+            Point::new(self.area.center().x, self.area.y0),
+            Offset::new(self.area.width(), 1),
+        );
+        shape::Bar::new(bar)
+            .with_fg(self.style.divider_color)
+            .render(target);
+
+        // footer text
+        self.text.render(target);
     }
 }
 
-pub struct ResultScreen<'a, T> {
+pub struct ResultScreen<'a> {
     bg: Pad,
     footer_pad: Pad,
     style: &'a ResultStyle,
     icon: Icon,
-    message: Child<Label<T>>,
-    footer: Child<ResultFooter<'a, T>>,
+    message: Child<Label<'a>>,
+    footer: Child<ResultFooter<'a>>,
 }
 
-impl<'a, T: StringType> ResultScreen<'a, T> {
+impl<'a> ResultScreen<'a> {
     pub fn new(
         style: &'a ResultStyle,
         icon: Icon,
-        message: T,
-        footer: T,
+        message: TString<'a>,
+        footer: Label<'a>,
         complete_draw: bool,
     ) -> Self {
         let mut instance = Self {
@@ -130,13 +148,13 @@ impl<'a, T: StringType> ResultScreen<'a, T> {
     }
 }
 
-impl<T: StringType> Component for ResultScreen<'_, T> {
+impl<'a> Component for ResultScreen<'a> {
     type Msg = Never;
 
     fn place(&mut self, _bounds: Rect) -> Rect {
         self.bg.place(screen());
 
-        let (main_area, footer_area) = ResultFooter::<T>::split_bounds();
+        let (main_area, footer_area) = ResultFooter::split_bounds();
 
         self.footer_pad.place(footer_area);
         self.footer.place(footer_area);
@@ -163,5 +181,22 @@ impl<T: StringType> Component for ResultScreen<'_, T> {
         );
         self.message.paint();
         self.footer.paint();
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.bg.render(target);
+        self.footer_pad.render(target);
+
+        shape::ToifImage::new(
+            Point::new(screen().center().x, ICON_CENTER_Y),
+            self.icon.toif,
+        )
+        .with_align(Alignment2D::CENTER)
+        .with_fg(self.style.fg_color)
+        .with_bg(self.style.bg_color)
+        .render(target);
+
+        self.message.render(target);
+        self.footer.render(target);
     }
 }

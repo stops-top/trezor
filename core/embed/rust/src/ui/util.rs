@@ -1,5 +1,6 @@
 use crate::{
-    strutil::ShortString,
+    strutil::{ShortString, TString},
+    time::Duration,
     ui::{
         component::text::TextStyle,
         display,
@@ -7,9 +8,6 @@ use crate::{
         geometry::{Alignment2D, Offset, Point},
     },
 };
-
-use cstr_core::CStr;
-use heapless::String;
 
 use super::display::Font;
 
@@ -21,9 +19,7 @@ impl<T, E> ResultExt for Result<T, E> {
     fn assert_if_debugging_ui(self, #[allow(unused)] message: &str) {
         #[cfg(feature = "ui_debug")]
         if self.is_err() {
-            print!("Panic from assert_if_debugging_ui: ");
-            println!(message);
-            panic!("{}", message);
+            fatal_error!(message);
         }
     }
 }
@@ -41,7 +37,7 @@ pub unsafe fn from_c_str<'a>(c_str: *const cty::c_char) -> Option<&'a str> {
         return None;
     }
     unsafe {
-        let bytes = CStr::from_ptr(c_str).to_bytes();
+        let bytes = core::ffi::CStr::from_ptr(c_str as _).to_bytes();
         if bytes.is_ascii() {
             Some(core::str::from_utf8_unchecked(bytes))
         } else {
@@ -102,34 +98,36 @@ pub fn icon_text_center(
     baseline: Point,
     icon: Icon,
     space: i16,
-    text: &str,
+    text: TString<'_>,
     style: TextStyle,
     text_offset: Offset,
 ) {
-    let icon_width = icon.toif.width();
-    let text_width = style.text_font.text_width(text);
-    let text_height = style.text_font.text_height();
-    let text_center = baseline + Offset::new((icon_width + space) / 2, text_height / 2);
-    let icon_center = baseline - Offset::x((text_width + space) / 2);
+    text.map(|t| {
+        let icon_width = icon.toif.width();
+        let text_width = style.text_font.text_width(t);
+        let text_height = style.text_font.text_height();
+        let text_center = baseline + Offset::new((icon_width + space) / 2, text_height / 2);
+        let icon_center = baseline - Offset::x((text_width + space) / 2);
 
-    display::text_center(
-        text_center + text_offset,
-        text,
-        style.text_font,
-        style.text_color,
-        style.background_color,
-    );
-    icon.draw(
-        icon_center,
-        Alignment2D::CENTER,
-        style.text_color,
-        style.background_color,
-    );
+        display::text_center(
+            text_center + text_offset,
+            t,
+            style.text_font,
+            style.text_color,
+            style.background_color,
+        );
+        icon.draw(
+            icon_center,
+            Alignment2D::CENTER,
+            style.text_color,
+            style.background_color,
+        );
+    });
 }
 
 /// Convert char to a ShortString.
 pub fn char_to_string(ch: char) -> ShortString {
-    let mut s = String::new();
+    let mut s = ShortString::new();
     unwrap!(s.push(ch));
     s
 }
@@ -137,8 +135,7 @@ pub fn char_to_string(ch: char) -> ShortString {
 /// Returns text to be fit on one line of a given length.
 /// When the text is too long to fit, it is truncated with ellipsis
 /// on the left side.
-/// Hardcoding 50 (via ShortString) as the length of the returned String -
-/// there should not be any lines as long as this.
+/// This assumes no lines are longer than 50 chars (ShortString limit)
 pub fn long_line_content_with_ellipsis(
     text: &str,
     ellipsis: &str,
@@ -146,7 +143,7 @@ pub fn long_line_content_with_ellipsis(
     available_width: i16,
 ) -> ShortString {
     if text_font.text_width(text) <= available_width {
-        String::from(text) // whole text can fit
+        unwrap!(ShortString::try_from(text)) // whole text can fit
     } else {
         // Text is longer, showing its right end with ellipsis at the beginning.
         // Finding out how many additional text characters will fit in,
@@ -155,26 +152,69 @@ pub fn long_line_content_with_ellipsis(
         let remaining_available_width = available_width - ellipsis_width;
         let chars_from_right = text_font.longest_suffix(remaining_available_width, text);
 
-        build_string!(50, ellipsis, &text[text.len() - chars_from_right..])
+        let mut s = ShortString::new();
+        unwrap!(s.push_str(ellipsis));
+        unwrap!(s.push_str(&text[text.len() - chars_from_right..]));
+        s
     }
 }
 
-#[macro_export]
 /// Create the `Icon` constant with given name and path.
 /// Possibly users can supply `true` as a third argument and this
 /// will signify that the icon has empty right column.
 macro_rules! include_icon {
     ($name:ident, $path:expr, empty_right_col = $empty:expr) => {
-        pub const $name: Icon = if $empty {
-            Icon::debug_named(include_res!($path), stringify!($name)).with_empty_right_column()
+        pub const $name: $crate::ui::display::toif::Icon = if $empty {
+            $crate::ui::display::toif::Icon::debug_named(
+                $crate::ui::util::include_res!($path),
+                stringify!($name),
+            )
+            .with_empty_right_column()
         } else {
-            Icon::debug_named(include_res!($path), stringify!($name))
+            $crate::ui::display::toif::Icon::debug_named(
+                $crate::ui::util::include_res!($path),
+                stringify!($name),
+            )
         };
     };
     // No empty right column by default.
     ($name:ident, $path:expr) => {
         include_icon!($name, $path, empty_right_col = false);
     };
+}
+pub(crate) use include_icon;
+
+macro_rules! include_res {
+    ($filename:expr) => {
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/", $filename))
+    };
+}
+pub(crate) use include_res;
+
+pub const SLIDE_DURATION_MS: Duration = Duration::from_millis(333);
+
+#[cfg(feature = "new_rendering")]
+pub fn render_slide<'s, F0, F1, R>(
+    render_old: F0,
+    render_new: F1,
+    progress: f32,
+    direction: crate::ui::component::SwipeDirection,
+    target: &mut R,
+) where
+    R: crate::ui::shape::Renderer<'s>,
+    F0: Fn(&mut R),
+    F1: Fn(&mut R),
+{
+    let bounds = target.viewport().clip;
+    let full_offset = direction.as_offset(bounds.size());
+    let current_offset = full_offset * progress;
+
+    target.with_origin(current_offset, &|target| {
+        render_old(target);
+    });
+    target.with_origin(current_offset - full_offset, &|target| {
+        render_new(target);
+    });
 }
 
 #[cfg(test)]

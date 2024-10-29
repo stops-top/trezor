@@ -25,7 +25,7 @@ from ...common import WITH_MOCK_URANDOM
 from ...input_flows import InputFlowBip39Recovery, InputFlowBip39ResetBackup
 
 
-@pytest.mark.skip_t1
+@pytest.mark.skip_t1b1
 @pytest.mark.setup_client(uninitialized=True)
 def test_reset_recovery(client: Client):
     mnemonic = reset(client)
@@ -50,13 +50,14 @@ def reset(client: Client, strength: int = 128, skip_backup: bool = False) -> str
             passphrase_protection=False,
             pin_protection=False,
             label="test",
-            language="en-US",
             backup_type=BackupType.Bip39,
         )
 
     # Check if device is properly initialized
     assert client.features.initialized is True
-    assert client.features.needs_backup is False
+    assert (
+        client.features.backup_availability == messages.BackupAvailability.NotAvailable
+    )
     assert client.features.pin_protection is False
     assert client.features.passphrase_protection is False
 

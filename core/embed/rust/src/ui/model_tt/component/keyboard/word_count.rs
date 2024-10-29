@@ -5,6 +5,7 @@ use crate::ui::{
         component::button::{Button, ButtonMsg},
         theme,
     },
+    shape::Renderer,
 };
 
 const NUMBERS: [u32; 5] = [12, 18, 20, 24, 33];
@@ -12,7 +13,7 @@ const LABELS: [&str; 5] = ["12", "18", "20", "24", "33"];
 const CELLS: [(usize, usize); 5] = [(0, 0), (0, 2), (0, 4), (1, 0), (1, 2)];
 
 pub struct SelectWordCount {
-    button: [Button<&'static str>; NUMBERS.len()],
+    button: [Button; NUMBERS.len()],
 }
 
 pub enum SelectWordCountMsg {
@@ -22,7 +23,7 @@ pub enum SelectWordCountMsg {
 impl SelectWordCount {
     pub fn new() -> Self {
         SelectWordCount {
-            button: LABELS.map(|t| Button::with_text(t).styled(theme::button_pin())),
+            button: LABELS.map(|t| Button::with_text(t.into()).styled(theme::button_pin())),
         }
     }
 }
@@ -54,6 +55,12 @@ impl Component for SelectWordCount {
     fn paint(&mut self) {
         for btn in self.button.iter_mut() {
             btn.paint()
+        }
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        for btn in self.button.iter() {
+            btn.render(target)
         }
     }
 

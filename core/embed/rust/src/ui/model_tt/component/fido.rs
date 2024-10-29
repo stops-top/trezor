@@ -1,15 +1,21 @@
-use crate::ui::{
-    component::{image::Image, Child, Component, Event, EventCtx, Label},
-    display,
-    geometry::{Insets, Rect},
-    model_tt::component::{
-        fido_icons::get_fido_icon_data,
-        swipe::{Swipe, SwipeDirection},
-        theme, ScrollBar,
+use crate::{
+    strutil::TString,
+    ui::{
+        component::{image::Image, Child, Component, Event, EventCtx, Label},
+        display,
+        geometry::{Insets, Rect},
+        model_tt::component::{
+            fido_icons::get_fido_icon_data,
+            swipe::{Swipe, SwipeDirection},
+            theme, ScrollBar,
+        },
+        shape,
+        shape::Renderer,
     },
 };
 
 use super::CancelConfirmMsg;
+use core::cell::Cell;
 
 const ICON_HEIGHT: i16 = 70;
 const SCROLLBAR_INSET_TOP: i16 = 5;
@@ -22,32 +28,31 @@ pub enum FidoMsg {
     Cancelled,
 }
 
-pub struct FidoConfirm<F: Fn(usize) -> T, T, U> {
+pub struct FidoConfirm<F: Fn(usize) -> TString<'static>, U> {
     page_swipe: Swipe,
-    app_name: Label<T>,
-    account_name: Label<T>,
+    app_name: Label<'static>,
+    account_name: Label<'static>,
     icon: Child<Image>,
     /// Function/closure that will return appropriate page on demand.
     get_account: F,
     scrollbar: ScrollBar,
-    fade: bool,
+    fade: Cell<bool>,
     controls: U,
 }
 
-impl<F, T, U> FidoConfirm<F, T, U>
+impl<F, U> FidoConfirm<F, U>
 where
-    F: Fn(usize) -> T,
-    T: AsRef<str> + From<&'static str>,
+    F: Fn(usize) -> TString<'static>,
     U: Component<Msg = CancelConfirmMsg>,
 {
     pub fn new(
-        app_name: T,
+        app_name: TString<'static>,
         get_account: F,
         page_count: usize,
-        icon_name: Option<T>,
+        icon_name: Option<TString<'static>>,
         controls: U,
     ) -> Self {
-        let icon_data = get_fido_icon_data(icon_name.as_ref());
+        let icon_data = get_fido_icon_data(icon_name);
 
         // Preparing scrollbar and setting its page-count.
         let mut scrollbar = ScrollBar::horizontal();
@@ -59,14 +64,27 @@ where
         page_swipe.allow_right = scrollbar.has_previous_page();
         page_swipe.allow_left = scrollbar.has_next_page();
 
+        // NOTE: This is an ugly hotfix for the erroneous behavior of
+        // TextLayout used in the account_name Label. In this
+        // particular case, TextLayout calculates the wrong height of
+        // fitted text that's higher than the TextLayout bound itself.
+        //
+        // The following two lines should be swapped when the problem with
+        // TextLayout is fixed.
+        //
+        // See also, continuation of this hotfix in the place() function.
+
+        // let current_account = get_account(scrollbar.active_page);
+        let current_account = "".into();
+
         Self {
             app_name: Label::centered(app_name, theme::TEXT_DEMIBOLD),
-            account_name: Label::centered("".into(), theme::TEXT_DEMIBOLD),
+            account_name: Label::centered(current_account, theme::TEXT_DEMIBOLD),
             page_swipe,
             icon: Child::new(Image::new(icon_data)),
             get_account,
             scrollbar,
-            fade: false,
+            fade: Cell::new(false),
             controls,
         }
     }
@@ -87,11 +105,14 @@ where
         self.page_swipe.allow_right = self.scrollbar.has_previous_page();
         self.page_swipe.allow_left = self.scrollbar.has_next_page();
 
+        let current_account = (self.get_account)(self.active_page());
+        self.account_name.set_text(current_account);
+
         // Redraw the page.
         ctx.request_paint();
 
         // Reset backlight to normal level on next paint.
-        self.fade = true;
+        self.fade.set(true);
     }
 
     fn active_page(&self) -> usize {
@@ -99,10 +120,9 @@ where
     }
 }
 
-impl<F, T, U> Component for FidoConfirm<F, T, U>
+impl<F, U> Component for FidoConfirm<F, U>
 where
-    F: Fn(usize) -> T,
-    T: AsRef<str> + From<&'static str>,
+    F: Fn(usize) -> TString<'static>,
     U: Component<Msg = CancelConfirmMsg>,
 {
     type Msg = FidoMsg;
@@ -139,6 +159,12 @@ where
         self.app_name.place(app_name_area);
         self.account_name.place(account_name_area);
 
+        // NOTE: This is a hotfix used due to the erroneous behavior of TextLayout.
+        // This line should be removed when the problem with TextLayout is fixed.
+        // See also the code for FidoConfirm::new().
+        self.account_name
+            .set_text((self.get_account)(self.scrollbar.active_page));
+
         bounds
     }
 
@@ -166,8 +192,6 @@ where
             self.scrollbar.paint();
         }
 
-        let current_account = (self.get_account)(self.active_page());
-
         // Erasing the old text content before writing the new one.
         let account_name_area = self.account_name.area();
         let real_area = account_name_area
@@ -177,17 +201,45 @@ where
         // Account name is optional.
         // Showing it only if it differs from app name.
         // (Dummy requests usually have some text as both app_name and account_name.)
-        if !current_account.as_ref().is_empty()
-            && current_account.as_ref() != self.app_name.text().as_ref()
-        {
-            self.account_name.set_text(current_account);
+        let account_name = self.account_name.text();
+        let app_name = self.app_name.text();
+        if !account_name.is_empty() && account_name != app_name {
             self.account_name.paint();
         }
 
-        if self.fade {
-            self.fade = false;
+        if self.fade.take() {
             // Note that this is blocking and takes some time.
-            display::fade_backlight(theme::BACKLIGHT_NORMAL);
+            display::fade_backlight(theme::backlight::get_backlight_normal());
+        }
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.icon.render(target);
+        self.controls.render(target);
+        self.app_name.render(target);
+
+        if self.scrollbar.page_count > 1 {
+            self.scrollbar.render(target);
+        }
+
+        // Erasing the old text content before writing the new one.
+        let account_name_area = self.account_name.area();
+        let real_area = account_name_area
+            .with_height(account_name_area.height() + self.account_name.font().text_baseline() + 1);
+        shape::Bar::new(real_area).with_bg(theme::BG).render(target);
+
+        // Account name is optional.
+        // Showing it only if it differs from app name.
+        // (Dummy requests usually have some text as both app_name and account_name.)
+        let account_name = self.account_name.text();
+        let app_name = self.app_name.text();
+        if !account_name.is_empty() && account_name != app_name {
+            self.account_name.render(target);
+        }
+
+        if self.fade.take() {
+            // Note that this is blocking and takes some time.
+            display::fade_backlight(theme::backlight::get_backlight_normal());
         }
     }
 
@@ -200,9 +252,9 @@ where
 }
 
 #[cfg(feature = "ui_debug")]
-impl<F, T, U> crate::trace::Trace for FidoConfirm<F, T, U>
+impl<F, T> crate::trace::Trace for FidoConfirm<F, T>
 where
-    F: Fn(usize) -> T,
+    F: Fn(usize) -> TString<'static>,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("FidoConfirm");

@@ -45,7 +45,7 @@
 // sometimes
 #define JPEG_WORK_SIZE (3100 + 256 + (6 << 10) + 1000)
 
-#if defined BOOTLOADER
+#if defined BOOTLOADER || defined BOARDLOADER
 #define BUFFER_SECTION __attribute__((section(".buf")))
 #else
 #define BUFFER_SECTION
@@ -81,6 +81,10 @@ typedef __attribute__((aligned(4))) struct {
   uint16_t buffer[10][3][BUFFER_PIXELS];
 } buffer_blurring_t;
 
+typedef __attribute__((aligned(4))) struct {
+  uint16_t buffer[3][BUFFER_PIXELS];
+} buffer_blurring_totals_t;
+
 extern const int32_t text_buffer_height;
 extern const int32_t buffer_width;
 
@@ -101,5 +105,8 @@ void buffers_free_jpeg_work(buffer_jpeg_work_t* buffer);
 
 buffer_blurring_t* buffers_get_blurring(bool clear);
 void buffers_free_blurring(buffer_blurring_t* buffer);
+
+buffer_blurring_totals_t* buffers_get_blurring_totals(bool clear);
+void buffers_free_blurring_totals(buffer_blurring_totals_t* buffer);
 
 #endif  // _BUFFERS_H

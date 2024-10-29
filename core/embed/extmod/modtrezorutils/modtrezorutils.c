@@ -23,6 +23,7 @@
 #include "supervise.h"
 #endif
 
+#include "image.h"
 #include "version.h"
 
 #if MICROPY_PY_TREZORUTILS
@@ -42,6 +43,12 @@
 #ifndef TREZOR_EMULATOR
 #include "image.h"
 #endif
+
+#if USE_OPTIGA && !defined(TREZOR_EMULATOR)
+#include "secret.h"
+#endif
+
+#define FW_HASHING_CHUNK_SIZE 1024
 
 static void ui_progress(mp_obj_t ui_wait_callback, uint32_t current,
                         uint32_t total) {
@@ -129,9 +136,9 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_trezorutils_memcpy_obj, 4, 5,
 STATIC mp_obj_t mod_trezorutils_halt(size_t n_args, const mp_obj_t *args) {
   mp_buffer_info_t msg = {0};
   if (n_args > 0 && mp_get_buffer(args[0], &msg, MP_BUFFER_READ)) {
-    ensure(secfalse, msg.buf);
+    error_shutdown(msg.buf);
   } else {
-    ensure(secfalse, "halt");
+    error_shutdown("halt");
   }
   return mp_const_none;
 }
@@ -167,19 +174,26 @@ STATIC mp_obj_t mod_trezorutils_firmware_hash(size_t n_args,
     ui_wait_callback = args[1];
   }
 
-  uint16_t firmware_sectors = flash_total_sectors(&FIRMWARE_AREA);
+  uint32_t firmware_size = flash_area_get_size(&FIRMWARE_AREA);
+  uint32_t chunks = firmware_size / FW_HASHING_CHUNK_SIZE;
 
-  ui_progress(ui_wait_callback, 0, firmware_sectors);
-  for (int i = 0; i < firmware_sectors; i++) {
-    uint8_t sector = flash_get_sector_num(&FIRMWARE_AREA, i);
-    uint32_t size = flash_sector_size(sector);
-    const void *data = flash_get_address(sector, 0, size);
+  ensure((firmware_size % FW_HASHING_CHUNK_SIZE == 0) * sectrue,
+         "Cannot compute FW hash.");
+
+  ui_progress(ui_wait_callback, 0, chunks);
+  for (int i = 0; i < chunks; i++) {
+    const void *data = flash_area_get_address(
+        &FIRMWARE_AREA, i * FW_HASHING_CHUNK_SIZE, FW_HASHING_CHUNK_SIZE);
     if (data == NULL) {
       mp_raise_msg(&mp_type_RuntimeError, "Failed to read firmware.");
     }
-    blake2s_Update(&ctx, data, size);
-    ui_progress(ui_wait_callback, i + 1, firmware_sectors);
+    blake2s_Update(&ctx, data, FW_HASHING_CHUNK_SIZE);
+    if (i % 128 == 0) {
+      ui_progress(ui_wait_callback, i + 1, chunks);
+    }
   }
+
+  ui_progress(ui_wait_callback, chunks, chunks);
 
   vstr_t vstr = {0};
   vstr_init_len(&vstr, BLAKE2S_DIGEST_LENGTH);
@@ -202,9 +216,7 @@ STATIC mp_obj_t mod_trezorutils_firmware_vendor(void) {
   return mp_obj_new_str_copy(&mp_type_str, (const uint8_t *)"EMULATOR", 8);
 #else
   vendor_header vhdr = {0};
-  uint32_t size = flash_sector_size(FIRMWARE_AREA.subarea[0].first_sector);
-  const void *data =
-      flash_get_address(FIRMWARE_AREA.subarea[0].first_sector, 0, size);
+  const void *data = flash_area_get_address(&FIRMWARE_AREA, 0, 0);
   if (data == NULL || sectrue != read_vendor_header(data, &vhdr)) {
     mp_raise_msg(&mp_type_RuntimeError, "Failed to read vendor header.");
   }
@@ -241,32 +253,191 @@ STATIC mp_obj_t mod_trezorutils_unit_btconly(void) {
 STATIC MP_DEFINE_CONST_FUN_OBJ_0(mod_trezorutils_unit_btconly_obj,
                                  mod_trezorutils_unit_btconly);
 
-/// def reboot_to_bootloader() -> None:
+/// def unit_packaging() -> int | None:
+///     """
+///     Returns the packaging version of the unit.
+///     """
+STATIC mp_obj_t mod_trezorutils_unit_packaging(void) {
+  if (!unit_variant_present()) {
+    return mp_const_none;
+  }
+  return mp_obj_new_int(unit_variant_get_packaging());
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(mod_trezorutils_unit_packaging_obj,
+                                 mod_trezorutils_unit_packaging);
+
+/// def sd_hotswap_enabled() -> bool:
+///     """
+///     Returns True if SD card hot swapping is enabled
+///     """
+STATIC mp_obj_t mod_trezorutils_sd_hotswap_enabled(void) {
+  return unit_variant_is_sd_hotswap_enabled() ? mp_const_true : mp_const_false;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(mod_trezorutils_sd_hotswap_enabled_obj,
+                                 mod_trezorutils_sd_hotswap_enabled);
+
+/// def reboot_to_bootloader(
+///     boot_command : int = 0,
+///     boot_args : bytes | None = None,
+/// ) -> None:
 ///     """
 ///     Reboots to bootloader.
 ///     """
-STATIC mp_obj_t mod_trezorutils_reboot_to_bootloader() {
+STATIC mp_obj_t mod_trezorutils_reboot_to_bootloader(size_t n_args,
+                                                     const mp_obj_t *args) {
 #ifndef TREZOR_EMULATOR
+  boot_command_t boot_command = BOOT_COMMAND_NONE;
+  mp_buffer_info_t boot_args = {0};
+
+  if (n_args > 0 && args[0] != mp_const_none) {
+    mp_int_t value = mp_obj_get_int(args[0]);
+
+    switch (value) {
+      case 0:
+        boot_command = BOOT_COMMAND_STOP_AND_WAIT;
+        break;
+      case 1:
+        boot_command = BOOT_COMMAND_INSTALL_UPGRADE;
+        break;
+      default:
+        mp_raise_ValueError("Invalid value.");
+        break;
+    }
+  }
+
+  if (n_args > 1 && args[1] != mp_const_none) {
+    mp_get_buffer_raise(args[1], &boot_args, MP_BUFFER_READ);
+  }
+
+  bootargs_set(boot_command, boot_args.buf, boot_args.len);
   svc_reboot_to_bootloader();
 #endif
   return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_0(mod_trezorutils_reboot_to_bootloader_obj,
-                                 mod_trezorutils_reboot_to_bootloader);
+
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(
+    mod_trezorutils_reboot_to_bootloader_obj, 0, 2,
+    mod_trezorutils_reboot_to_bootloader);
+
+/// VersionTuple = Tuple[int, int, int, int]
+
+/// class FirmwareHeaderInfo(NamedTuple):
+///     version: VersionTuple
+///     vendor: str
+///     fingerprint: bytes
+///     hash: bytes
+
+/// mock:global
+
+/// def check_firmware_header(header : bytes) -> FirmwareHeaderInfo:
+///     """Parses incoming firmware header and returns information about it."""
+STATIC mp_obj_t mod_trezorutils_check_firmware_header(mp_obj_t header) {
+  mp_buffer_info_t header_buf = {0};
+  mp_get_buffer_raise(header, &header_buf, MP_BUFFER_READ);
+
+  firmware_header_info_t info;
+
+  if (sectrue == check_firmware_header(header_buf.buf, header_buf.len, &info)) {
+    mp_obj_t version[4] = {
+        mp_obj_new_int(info.ver_major), mp_obj_new_int(info.ver_minor),
+        mp_obj_new_int(info.ver_patch), mp_obj_new_int(info.ver_build)};
+
+    static const qstr fields[4] = {MP_QSTR_version, MP_QSTR_vendor,
+                                   MP_QSTR_fingerprint, MP_QSTR_hash};
+    const mp_obj_t values[4] = {
+        mp_obj_new_tuple(MP_ARRAY_SIZE(version), version),
+        mp_obj_new_str_copy(&mp_type_str, info.vstr, info.vstr_len),
+        mp_obj_new_bytes(info.fingerprint, sizeof(info.fingerprint)),
+        mp_obj_new_bytes(info.hash, sizeof(info.hash))};
+    return mp_obj_new_attrtuple(fields, MP_ARRAY_SIZE(fields), values);
+  }
+
+  mp_raise_ValueError("Invalid value.");
+}
+
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(mod_trezorutils_check_firmware_header_obj,
+                                 mod_trezorutils_check_firmware_header);
+
+/// def bootloader_locked() -> bool | None:
+///     """
+///     Returns True/False if the the bootloader is locked/unlocked and None if
+///     the feature is not supported.
+///     """
+STATIC mp_obj_t mod_trezorutils_bootloader_locked() {
+#if USE_OPTIGA
+#ifdef TREZOR_EMULATOR
+  return mp_const_true;
+#else
+  return (secret_bootloader_locked() == sectrue) ? mp_const_true
+                                                 : mp_const_false;
+#endif
+#else
+  return mp_const_none;
+#endif
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_0(mod_trezorutils_bootloader_locked_obj,
+                                 mod_trezorutils_bootloader_locked);
 
 STATIC mp_obj_str_t mod_trezorutils_revision_obj = {
     {&mp_type_bytes}, 0, sizeof(SCM_REVISION) - 1, (const byte *)SCM_REVISION};
 
+STATIC mp_obj_str_t mod_trezorutils_model_name_obj = {
+    {&mp_type_str}, 0, sizeof(MODEL_NAME) - 1, (const byte *)MODEL_NAME};
+
+STATIC mp_obj_str_t mod_trezorutils_full_name_obj = {
+    {&mp_type_str},
+    0,
+    sizeof(MODEL_FULL_NAME) - 1,
+    (const byte *)MODEL_FULL_NAME};
+
+STATIC mp_obj_str_t mod_trezorutils_model_usb_manufacturer_obj = {
+    {&mp_type_str},
+    0,
+    sizeof(MODEL_USB_MANUFACTURER) - 1,
+    (const byte *)MODEL_USB_MANUFACTURER};
+
+STATIC mp_obj_str_t mod_trezorutils_model_usb_product_obj = {
+    {&mp_type_str},
+    0,
+    sizeof(MODEL_USB_PRODUCT) - 1,
+    (const byte *)MODEL_USB_PRODUCT};
+
+STATIC mp_obj_tuple_t mod_trezorutils_version_obj = {
+    {&mp_type_tuple},
+    4,
+    {MP_OBJ_NEW_SMALL_INT(VERSION_MAJOR), MP_OBJ_NEW_SMALL_INT(VERSION_MINOR),
+     MP_OBJ_NEW_SMALL_INT(VERSION_PATCH), MP_OBJ_NEW_SMALL_INT(VERSION_BUILD)}};
+
 /// SCM_REVISION: bytes
-/// VERSION_MAJOR: int
-/// VERSION_MINOR: int
-/// VERSION_PATCH: int
+/// """Git commit hash of the firmware."""
+/// VERSION: VersionTuple
+/// """Firmware version as a tuple (major, minor, patch, build)."""
 /// USE_SD_CARD: bool
+/// """Whether the hardware supports SD card."""
 /// USE_BACKLIGHT: bool
+/// """Whether the hardware supports backlight brightness control."""
+/// USE_HAPTIC: bool
+/// """Whether the hardware supports haptic feedback."""
+/// USE_OPTIGA: bool
+/// """Whether the hardware supports Optiga secure element."""
 /// MODEL: str
+/// """Model name."""
+/// MODEL_FULL_NAME: str
+/// """Full name including Trezor prefix."""
+/// MODEL_USB_MANUFACTURER: str
+/// """USB Manufacturer name."""
+/// MODEL_USB_PRODUCT: str
+/// """USB Product name."""
 /// INTERNAL_MODEL: str
+/// """Internal model code."""
 /// EMULATOR: bool
+/// """Whether the firmware is running in the emulator."""
 /// BITCOIN_ONLY: bool
+/// """Whether the firmware is Bitcoin-only."""
+/// UI_LAYOUT: str
+/// """UI layout identifier ("tt" for model T, "tr" for models One and R)."""
+/// USE_THP: bool
+/// """Whether the firmware supports Trezor-Host Protocol (version 3)."""
 
 STATIC const mp_rom_map_elem_t mp_module_trezorutils_globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_trezorutils)},
@@ -279,16 +450,22 @@ STATIC const mp_rom_map_elem_t mp_module_trezorutils_globals_table[] = {
      MP_ROM_PTR(&mod_trezorutils_firmware_vendor_obj)},
     {MP_ROM_QSTR(MP_QSTR_reboot_to_bootloader),
      MP_ROM_PTR(&mod_trezorutils_reboot_to_bootloader_obj)},
+    {MP_ROM_QSTR(MP_QSTR_check_firmware_header),
+     MP_ROM_PTR(&mod_trezorutils_check_firmware_header_obj)},
+    {MP_ROM_QSTR(MP_QSTR_bootloader_locked),
+     MP_ROM_PTR(&mod_trezorutils_bootloader_locked_obj)},
     {MP_ROM_QSTR(MP_QSTR_unit_color),
      MP_ROM_PTR(&mod_trezorutils_unit_color_obj)},
+    {MP_ROM_QSTR(MP_QSTR_unit_packaging),
+     MP_ROM_PTR(&mod_trezorutils_unit_packaging_obj)},
     {MP_ROM_QSTR(MP_QSTR_unit_btconly),
      MP_ROM_PTR(&mod_trezorutils_unit_btconly_obj)},
+    {MP_ROM_QSTR(MP_QSTR_sd_hotswap_enabled),
+     MP_ROM_PTR(&mod_trezorutils_sd_hotswap_enabled_obj)},
     // various built-in constants
     {MP_ROM_QSTR(MP_QSTR_SCM_REVISION),
      MP_ROM_PTR(&mod_trezorutils_revision_obj)},
-    {MP_ROM_QSTR(MP_QSTR_VERSION_MAJOR), MP_ROM_INT(VERSION_MAJOR)},
-    {MP_ROM_QSTR(MP_QSTR_VERSION_MINOR), MP_ROM_INT(VERSION_MINOR)},
-    {MP_ROM_QSTR(MP_QSTR_VERSION_PATCH), MP_ROM_INT(VERSION_PATCH)},
+    {MP_ROM_QSTR(MP_QSTR_VERSION), MP_ROM_PTR(&mod_trezorutils_version_obj)},
 #ifdef USE_SD_CARD
     {MP_ROM_QSTR(MP_QSTR_USE_SD_CARD), mp_const_true},
 #else
@@ -299,7 +476,23 @@ STATIC const mp_rom_map_elem_t mp_module_trezorutils_globals_table[] = {
 #else
     {MP_ROM_QSTR(MP_QSTR_USE_BACKLIGHT), mp_const_false},
 #endif
-    {MP_ROM_QSTR(MP_QSTR_MODEL), MP_ROM_QSTR(MODEL_NAME_QSTR)},
+#ifdef USE_HAPTIC
+    {MP_ROM_QSTR(MP_QSTR_USE_HAPTIC), mp_const_true},
+#else
+    {MP_ROM_QSTR(MP_QSTR_USE_HAPTIC), mp_const_false},
+#endif
+#ifdef USE_OPTIGA
+    {MP_ROM_QSTR(MP_QSTR_USE_OPTIGA), mp_const_true},
+#else
+    {MP_ROM_QSTR(MP_QSTR_USE_OPTIGA), mp_const_false},
+#endif
+    {MP_ROM_QSTR(MP_QSTR_MODEL), MP_ROM_PTR(&mod_trezorutils_model_name_obj)},
+    {MP_ROM_QSTR(MP_QSTR_MODEL_FULL_NAME),
+     MP_ROM_PTR(&mod_trezorutils_full_name_obj)},
+    {MP_ROM_QSTR(MP_QSTR_MODEL_USB_MANUFACTURER),
+     MP_ROM_PTR(&mod_trezorutils_model_usb_manufacturer_obj)},
+    {MP_ROM_QSTR(MP_QSTR_MODEL_USB_PRODUCT),
+     MP_ROM_PTR(&mod_trezorutils_model_usb_product_obj)},
     {MP_ROM_QSTR(MP_QSTR_INTERNAL_MODEL),
      MP_ROM_QSTR(MODEL_INTERNAL_NAME_QSTR)},
 #ifdef TREZOR_EMULATOR
@@ -312,6 +505,20 @@ STATIC const mp_rom_map_elem_t mp_module_trezorutils_globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR_BITCOIN_ONLY), mp_const_true},
 #else
     {MP_ROM_QSTR(MP_QSTR_BITCOIN_ONLY), mp_const_false},
+#endif
+#ifdef USE_THP
+    {MP_ROM_QSTR(MP_QSTR_USE_THP), mp_const_true},
+#else
+    {MP_ROM_QSTR(MP_QSTR_USE_THP), mp_const_false},
+#endif
+#ifdef UI_LAYOUT_TT
+    {MP_ROM_QSTR(MP_QSTR_UI_LAYOUT), MP_ROM_QSTR(MP_QSTR_TT)},
+#elif UI_LAYOUT_TR
+    {MP_ROM_QSTR(MP_QSTR_UI_LAYOUT), MP_ROM_QSTR(MP_QSTR_TR)},
+#elif UI_LAYOUT_MERCURY
+    {MP_ROM_QSTR(MP_QSTR_UI_LAYOUT), MP_ROM_QSTR(MP_QSTR_MERCURY)},
+#else
+#error Unknown layout
 #endif
 };
 

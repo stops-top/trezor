@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING
 from ubinascii import hexlify
 
+from trezor import TR
+
 from . import seed
 
 if TYPE_CHECKING:
@@ -35,7 +37,10 @@ async def get_public_key(
         raise wire.ProcessError("Deriving public key failed")
 
     if msg.show_display:
-        await show_pubkey(hexlify(key.node.public_key).decode())
+        from apps.common.paths import address_n_to_str
+
+        path = address_n_to_str(address_n)
+        await show_pubkey(key.xpub, TR.address__public_key, path=path)
     return key
 
 

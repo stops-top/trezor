@@ -1,8 +1,9 @@
 use crate::{
-    strutil::StringType,
+    strutil::TString,
     ui::{
         component::{base::Component, FormattedText, Paginate},
         geometry::Rect,
+        shape::Renderer,
     },
 };
 
@@ -21,10 +22,9 @@ const MAX_OPS_PER_PAGE: usize = 15;
 /// have theoretically unlimited number of pages without triggering SO.
 /// (Currently only the current page is stored on stack - in
 /// `Flow::current_page`.)
-pub struct FlowPages<F, T>
+pub struct FlowPages<F>
 where
-    T: StringType + Clone,
-    F: Fn(usize) -> Page<T>,
+    F: Fn(usize) -> Page,
 {
     /// Function/closure that will return appropriate page on demand.
     get_page: F,
@@ -32,10 +32,9 @@ where
     page_count: usize,
 }
 
-impl<F, T> FlowPages<F, T>
+impl<F> FlowPages<F>
 where
-    F: Fn(usize) -> Page<T>,
-    T: StringType + Clone,
+    F: Fn(usize) -> Page,
 {
     pub fn new(get_page: F, page_count: usize) -> Self {
         Self {
@@ -45,7 +44,7 @@ where
     }
 
     /// Returns a page on demand on a specified index.
-    pub fn get(&self, page_index: usize) -> Page<T> {
+    pub fn get(&self, page_index: usize) -> Page {
         (self.get_page)(page_index)
     }
 
@@ -74,53 +73,57 @@ where
 }
 
 #[derive(Clone)]
-pub struct Page<T>
-where
-    T: StringType + Clone,
-{
-    formatted: FormattedText<T>,
-    btn_layout: ButtonLayout<T>,
+pub struct Page {
+    formatted: FormattedText,
+    btn_layout: ButtonLayout,
     btn_actions: ButtonActions,
     current_page: usize,
     page_count: usize,
-    title: Option<T>,
+    title: Option<TString<'static>>,
+    slim_arrows: bool,
 }
 
 // For `layout.rs`
-impl<T> Page<T>
-where
-    T: StringType + Clone,
-{
+impl Page {
     pub fn new(
-        btn_layout: ButtonLayout<T>,
+        btn_layout: ButtonLayout,
         btn_actions: ButtonActions,
-        formatted: FormattedText<T>,
+        formatted: FormattedText,
     ) -> Self {
-        Self {
+        let mut page = Self {
             formatted,
             btn_layout,
             btn_actions,
             current_page: 0,
             page_count: 1,
             title: None,
-        }
+            slim_arrows: false,
+        };
+        page.change_page(page.current_page);
+        page
     }
 }
 
 // For `flow.rs`
-impl<T> Page<T>
-where
-    T: StringType + Clone,
-{
+impl Page {
     /// Adding title.
-    pub fn with_title(mut self, title: T) -> Self {
+    pub fn with_title(mut self, title: TString<'static>) -> Self {
         self.title = Some(title);
         self
     }
 
+    /// Using slim arrows instead of wide buttons.
+    pub fn with_slim_arrows(mut self) -> Self {
+        self.slim_arrows = true;
+        self
+    }
+
     pub fn paint(&mut self) {
-        self.change_page(self.current_page);
         self.formatted.paint();
+    }
+
+    pub fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.formatted.render(target);
     }
 
     pub fn place(&mut self, bounds: Rect) -> Rect {
@@ -129,7 +132,7 @@ where
         bounds
     }
 
-    pub fn btn_layout(&self) -> ButtonLayout<T> {
+    pub fn btn_layout(&self) -> ButtonLayout {
         // When we are in pagination inside this flow,
         // show the up and down arrows on appropriate sides.
         let current = self.btn_layout.clone();
@@ -137,17 +140,29 @@ where
         // On the last page showing only the narrow arrow, so the right
         // button with possibly long text has enough space.
         let btn_left = if self.has_prev_page() && !self.has_next_page() {
-            Some(ButtonDetails::up_arrow_icon())
+            if self.slim_arrows {
+                Some(ButtonDetails::left_arrow_icon())
+            } else {
+                Some(ButtonDetails::up_arrow_icon())
+            }
         } else if self.has_prev_page() {
-            Some(ButtonDetails::up_arrow_icon_wide())
+            if self.slim_arrows {
+                Some(ButtonDetails::left_arrow_icon())
+            } else {
+                Some(ButtonDetails::up_arrow_icon_wide())
+            }
         } else {
             current.btn_left
         };
 
         // Middle button should be shown only on the last page, not to collide
-        // with the fat right button.
+        // with the possible fat right button.
         let (btn_middle, btn_right) = if self.has_next_page() {
-            (None, Some(ButtonDetails::down_arrow_icon_wide()))
+            if self.slim_arrows {
+                (None, Some(ButtonDetails::right_arrow_icon()))
+            } else {
+                (None, Some(ButtonDetails::down_arrow_icon_wide()))
+            }
         } else {
             (current.btn_middle, current.btn_right)
         };
@@ -159,8 +174,8 @@ where
         self.btn_actions
     }
 
-    pub fn title(&self) -> Option<T> {
-        self.title.clone()
+    pub fn title(&self) -> Option<TString<'static>> {
+        self.title
     }
 
     pub fn has_prev_page(&self) -> bool {
@@ -173,10 +188,12 @@ where
 
     pub fn go_to_prev_page(&mut self) {
         self.current_page -= 1;
+        self.change_page(self.current_page);
     }
 
     pub fn go_to_next_page(&mut self) {
         self.current_page += 1;
+        self.change_page(self.current_page);
     }
 
     pub fn get_current_page(&self) -> usize {
@@ -185,10 +202,7 @@ where
 }
 
 // Pagination
-impl<T> Paginate for Page<T>
-where
-    T: StringType + Clone,
-{
+impl Paginate for Page {
     fn page_count(&mut self) -> usize {
         self.formatted.page_count()
     }
@@ -204,10 +218,7 @@ where
 use crate::ui::component::text::layout::LayoutFit;
 
 #[cfg(feature = "ui_debug")]
-impl<T> crate::trace::Trace for Page<T>
-where
-    T: StringType + Clone,
-{
+impl crate::trace::Trace for Page {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         use crate::ui::component::text::layout::trace::TraceSink;
         use core::cell::Cell;
@@ -215,12 +226,12 @@ where
         t.component("Page");
         if let Some(title) = &self.title {
             // Not calling it "title" as that is already traced by FlowPage
-            t.string("page_title", title.as_ref());
+            t.string("page_title", *title);
         }
         t.int("active_page", self.current_page as i64);
         t.int("page_count", self.page_count as i64);
         t.in_list("text", &|l| {
-            let result = self.formatted.layout_content_debug(&mut TraceSink(l));
+            let result = self.formatted.layout_content(&mut TraceSink(l));
             fit.set(Some(result));
         });
     }

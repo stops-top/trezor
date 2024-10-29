@@ -126,6 +126,7 @@ OBJS += ../vendor/trezor-crypto/nem.o
 OBJS += ../vendor/QR-Code-generator/c/qrcodegen.o
 
 OBJS += ../vendor/trezor-storage/storage.o
+OBJS += ../vendor/trezor-storage/storage_utils.o
 OBJS += ../vendor/trezor-storage/norcow.o
 
 OBJS += ../vendor/nanopb/pb_common.o
@@ -162,6 +163,7 @@ CFLAGS += -Wno-sequence-point
 CFLAGS += -I../vendor/nanopb -Iprotob -DPB_FIELD_16BIT=1 -DPB_ENCODE_ARRAYS_UNPACKED=1 -DPB_VALIDATE_UTF8=1
 CFLAGS += -DSCM_REVISION='"$(shell git rev-parse HEAD | sed 's:\(..\):\\x\1:g')"'
 CFLAGS += -DUSE_MONERO=0
+CFLAGS += -DUSE_OPTIGA=0
 ifneq ($(BITCOIN_ONLY),1)
 CFLAGS += -DUSE_ETHEREUM=1
 CFLAGS += -DUSE_NEM=1

@@ -17,26 +17,52 @@ LEFT = grid(DISPLAY_WIDTH, 3, 0)
 MID = grid(DISPLAY_WIDTH, 3, 1)
 RIGHT = grid(DISPLAY_WIDTH, 3, 2)
 
-TOP = grid(DISPLAY_HEIGHT, 4, 0)
-BOTTOM = grid(DISPLAY_HEIGHT, 4, 3)
+TOP = grid(DISPLAY_HEIGHT, 6, 0)
+BOTTOM = grid(DISPLAY_HEIGHT, 6, 5)
 
 OK = (RIGHT, BOTTOM)
 CANCEL = (LEFT, BOTTOM)
 INFO = (MID, BOTTOM)
+
+RECOVERY_DELETE = (LEFT, TOP)
 
 CORNER_BUTTON = (215, 25)
 
 CONFIRM_WORD = (MID, TOP)
 TOP_ROW = (MID, TOP)
 
-RESET_MINUS = (LEFT, grid(DISPLAY_HEIGHT, 5, 1))
-RESET_PLUS = (RIGHT, grid(DISPLAY_HEIGHT, 5, 1))
+
+def reset_minus(model_internal_name: str) -> Coords:
+    RESET_MINUS_T3T1 = (LEFT, grid(DISPLAY_HEIGHT, 5, 3))
+    RESET_MINUS = (LEFT, grid(DISPLAY_HEIGHT, 5, 1))
+    if model_internal_name == "T3T1":
+        return RESET_MINUS_T3T1
+    else:
+        return RESET_MINUS
+
+
+def reset_plus(model_internal_name: str) -> Coords:
+    RESET_PLUS_T3T1 = (RIGHT, grid(DISPLAY_HEIGHT, 5, 3))
+    RESET_PLUS = (RIGHT, grid(DISPLAY_HEIGHT, 5, 1))
+    if model_internal_name == "T3T1":
+        return RESET_PLUS_T3T1
+    else:
+        return RESET_PLUS
+
 
 RESET_WORD_CHECK = [
     (MID, grid(DISPLAY_HEIGHT, 5, 2)),
     (MID, grid(DISPLAY_HEIGHT, 5, 3)),
     (MID, grid(DISPLAY_HEIGHT, 5, 4)),
 ]
+
+VERTICAL_MENU = [
+    (MID, grid(DISPLAY_HEIGHT, 4, 1)),
+    (MID, grid(DISPLAY_HEIGHT, 4, 2)),
+    (MID, grid(DISPLAY_HEIGHT, 4, 3)),
+]
+
+TAP_TO_CONFIRM = VERTICAL_MENU[1]
 
 
 BUTTON_LETTERS_BIP39 = ("abc", "def", "ghi", "jkl", "mno", "pqr", "stu", "vwx", "yz")

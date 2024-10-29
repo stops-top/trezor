@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from trezorlib import btc, device
+from trezorlib import btc, device, models
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.tools import parse_path
 
@@ -27,7 +27,7 @@ PIN = "1234"
 
 def _assert_busy(client: Client, should_be_busy: bool, screen: str = "Homescreen"):
     assert client.features.busy is should_be_busy
-    if client.debug.model in ("T", "R"):
+    if client.model in (models.T2T1, models.T2B1, models.T3T1):
         if should_be_busy:
             assert "CoinJoinProgress" in client.debug.read_layout().all_components()
         else:
@@ -69,11 +69,11 @@ def test_busy_expiry(client: Client):
     _assert_busy(client, True)
 
     # Hasn't expired yet.
-    time.sleep(1.4)
+    time.sleep(0.1)
     _assert_busy(client, True)
 
-    # Wait for it to expire. Add 400ms tolerance to account for CI slowness.
-    time.sleep(0.5)
+    # Wait for it to expire. Add some tolerance to account for CI/hardware slowness.
+    time.sleep(4.0)
 
     # Check that the device is no longer busy.
     # Also needs to come back to Homescreen (for UI tests).

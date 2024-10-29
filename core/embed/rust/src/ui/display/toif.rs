@@ -1,12 +1,10 @@
 use crate::{
-    trezorhal::{
-        display::ToifFormat,
-        uzlib::{UzlibContext, UZLIB_WINDOW_SIZE},
-    },
+    error::{value_error, Error},
+    trezorhal::uzlib::{UzlibContext, UZLIB_WINDOW_SIZE},
     ui::{
         component::image::Image,
         constant,
-        display::{get_color_table, get_offset, pixeldata, pixeldata_dirty, set_window},
+        display::{get_offset, pixeldata_dirty, set_window},
         geometry::{Alignment2D, Offset, Point, Rect},
     },
 };
@@ -20,14 +18,31 @@ use crate::{
     ui::display::process_buffer,
 };
 
+#[cfg(not(feature = "framebuffer"))]
+use crate::ui::display::{get_color_table, pixeldata};
+
+#[cfg(feature = "framebuffer")]
+use crate::trezorhal::{buffers::BufferLine4bpp, dma2d::dma2d_setup_4bpp};
+#[cfg(feature = "framebuffer")]
+use core::cmp::max;
+
 use super::Color;
 
 const TOIF_HEADER_LENGTH: usize = 12;
+
+#[derive(PartialEq, Debug, Eq, FromPrimitive, Clone, Copy)]
+pub enum ToifFormat {
+    FullColorBE = 0, // big endian
+    GrayScaleOH = 1, // odd hi
+    FullColorLE = 2, // little endian
+    GrayScaleEH = 3, // even hi
+}
 
 pub fn render_icon(icon: &Icon, center: Point, fg_color: Color, bg_color: Color) {
     render_toif(&icon.toif, center, fg_color, bg_color);
 }
 
+#[cfg(not(feature = "framebuffer"))]
 pub fn render_toif(toif: &Toif, center: Point, fg_color: Color, bg_color: Color) {
     let r = Rect::from_center_and_size(center, toif.size());
     let area = r.translate(get_offset());
@@ -63,16 +78,43 @@ pub fn render_toif(toif: &Toif, center: Point, fg_color: Color, bg_color: Color)
     pixeldata_dirty();
 }
 
-#[no_mangle]
-extern "C" fn display_image(
-    x: cty::int16_t,
-    y: cty::int16_t,
-    data: *const cty::uint8_t,
-    data_len: cty::uint32_t,
-) {
-    let data_slice = unsafe { core::slice::from_raw_parts(data, data_len as usize) };
-    let image = Image::new(data_slice);
-    image.draw(Point::new(x, y), Alignment2D::TOP_LEFT);
+#[cfg(feature = "framebuffer")]
+pub fn render_toif(toif: &Toif, center: Point, fg_color: Color, bg_color: Color) {
+    let r = Rect::from_center_and_size(center, toif.size());
+    let area = r.translate(get_offset());
+    let clamped = area.clamp(constant::screen()).ensure_even_width();
+
+    set_window(clamped);
+
+    let mut b1 = BufferLine4bpp::get_cleared();
+    let mut b2 = BufferLine4bpp::get_cleared();
+
+    let mut window = [0; UZLIB_WINDOW_SIZE];
+    let mut ctx = toif.decompression_context(Some(&mut window));
+
+    dma2d_setup_4bpp(fg_color.into(), bg_color.into());
+
+    let x_shift = max(0, clamped.x0 - area.x0);
+
+    for y in area.y0..clamped.y1 {
+        let img_buffer_used = if y % 2 == 0 { &mut b1 } else { &mut b2 };
+
+        unwrap!(ctx.uncompress(&mut (&mut img_buffer_used.buffer)[..(area.width() / 2) as usize]));
+
+        if y >= clamped.y0 {
+            dma2d_wait_for_transfer();
+            unsafe {
+                dma2d_start(
+                    &img_buffer_used.buffer
+                        [(x_shift / 2) as usize..((clamped.width() + x_shift) / 2) as usize],
+                    clamped.width(),
+                )
+            };
+        }
+    }
+
+    dma2d_wait_for_transfer();
+    pixeldata_dirty();
 }
 
 #[cfg(feature = "dma2d")]
@@ -163,16 +205,16 @@ pub struct Toif<'i> {
 }
 
 impl<'i> Toif<'i> {
-    pub const fn new(data: &'i [u8]) -> Option<Self> {
+    pub const fn new(data: &'i [u8]) -> Result<Self, Error> {
         if data.len() < TOIF_HEADER_LENGTH || data[0] != b'T' || data[1] != b'O' || data[2] != b'I'
         {
-            return None;
+            return Err(value_error!(c"Invalid TOIF header."));
         }
         let zdatalen = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
         if zdatalen + TOIF_HEADER_LENGTH != data.len() {
-            return None;
+            return Err(value_error!(c"Invalid TOIF length."));
         }
-        Some(Self {
+        Ok(Self {
             data,
             empty_right_column: false,
         })
@@ -217,8 +259,20 @@ impl<'i> Toif<'i> {
         Offset::new(self.width(), self.height())
     }
 
+    pub fn stride(&self) -> usize {
+        if self.is_grayscale() {
+            (self.width() + 1) as usize / 2
+        } else {
+            self.width() as usize * 2
+        }
+    }
+
     pub fn zdata(&self) -> &'i [u8] {
         &self.data[TOIF_HEADER_LENGTH..]
+    }
+
+    pub fn original_data(&self) -> &'i [u8] {
+        self.data
     }
 
     pub fn uncompress(&self, dest: &mut [u8]) {
@@ -241,25 +295,6 @@ impl<'i> Toif<'i> {
     }
 }
 
-#[no_mangle]
-extern "C" fn display_icon(
-    x: cty::int16_t,
-    y: cty::int16_t,
-    data: *const cty::uint8_t,
-    data_len: cty::uint32_t,
-    fg_color: cty::uint16_t,
-    bg_color: cty::uint16_t,
-) {
-    let data_slice = unsafe { core::slice::from_raw_parts(data, data_len as usize) };
-    let icon = Icon::new(data_slice);
-    icon.draw(
-        Point::new(x, y),
-        Alignment2D::TOP_LEFT,
-        Color::from_u16(fg_color),
-        Color::from_u16(bg_color),
-    );
-}
-
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Icon {
     pub toif: Toif<'static>,
@@ -270,8 +305,8 @@ pub struct Icon {
 impl Icon {
     pub const fn new(data: &'static [u8]) -> Self {
         let toif = match Toif::new(data) {
-            Some(t) => t,
-            None => panic!("Invalid image."),
+            Ok(t) => t,
+            _ => panic!("Invalid image."),
         };
         assert!(matches!(toif.format(), ToifFormat::GrayScaleEH));
         Self {

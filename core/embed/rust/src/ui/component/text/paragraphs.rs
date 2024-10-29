@@ -1,11 +1,15 @@
 use heapless::Vec;
 
 use crate::{
-    strutil::StringType,
+    strutil::TString,
     ui::{
         component::{Component, Event, EventCtx, Never, Paginate},
-        display::toif::Icon,
-        geometry::{Alignment, Alignment2D, Insets, LinearPlacement, Offset, Point, Rect},
+        display::{toif::Icon, Color, Font},
+        geometry::{
+            Alignment, Alignment2D, Dimensions, Insets, LinearPlacement, Offset, Point, Rect,
+        },
+        shape,
+        shape::Renderer,
     },
 };
 
@@ -24,16 +28,13 @@ pub const PARAGRAPH_TOP_SPACE: i16 = -1;
 /// Offset of paragraph bounding box bottom relative to bottom of its text.
 pub const PARAGRAPH_BOTTOM_SPACE: i16 = 5;
 
-pub type ParagraphVecLong<T> = Vec<Paragraph<T>, 32>;
-pub type ParagraphVecShort<T> = Vec<Paragraph<T>, 8>;
+pub type ParagraphVecLong<'a> = Vec<Paragraph<'a>, 32>;
+pub type ParagraphVecShort<'a> = Vec<Paragraph<'a>, 8>;
 
-pub trait ParagraphSource {
-    /// Determines the output type produced.
-    type StrType: StringType;
-
+pub trait ParagraphSource<'a> {
     /// Return text and associated style for given paragraph index and character
     /// offset within the paragraph.
-    fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType>;
+    fn at(&self, index: usize, offset: usize) -> Paragraph<'a>;
 
     /// Number of paragraphs.
     fn size(&self) -> usize;
@@ -46,17 +47,18 @@ pub trait ParagraphSource {
     }
 }
 
+#[derive(Clone)]
 pub struct Paragraphs<T> {
     area: Rect,
     placement: LinearPlacement,
     offset: PageOffset,
-    visible: Vec<TextLayout, MAX_LINES>,
+    visible: Vec<TextLayoutProxy, MAX_LINES>,
     source: T,
 }
 
-impl<T> Paragraphs<T>
+impl<'a, T> Paragraphs<T>
 where
-    T: ParagraphSource,
+    T: ParagraphSource<'a>,
 {
     pub fn new(source: T) -> Self {
         Self {
@@ -99,11 +101,11 @@ where
 
     /// Helper for `change_offset` which should not get monomorphized as it
     /// doesn't refer to T or Self.
-    fn dyn_change_offset<S: StringType>(
+    fn dyn_change_offset(
         mut area: Rect,
         mut offset: PageOffset,
-        source: &dyn ParagraphSource<StrType = S>,
-        visible: &mut Vec<TextLayout, MAX_LINES>,
+        source: &dyn ParagraphSource<'_>,
+        visible: &mut Vec<TextLayoutProxy, MAX_LINES>,
     ) {
         visible.clear();
         let full_height = area.height();
@@ -133,9 +135,9 @@ where
 
     /// Iterate over visible layouts (bounding box, style) together
     /// with corresponding string content. Should not get monomorphized.
-    fn foreach_visible<'a, S: StringType>(
-        source: &'a dyn ParagraphSource<StrType = S>,
-        visible: &'a [TextLayout],
+    fn foreach_visible<'b>(
+        source: &'b dyn ParagraphSource<'a>,
+        visible: &'b [TextLayoutProxy],
         offset: PageOffset,
         func: &mut dyn FnMut(&TextLayout, &str),
     ) {
@@ -144,12 +146,13 @@ where
 
         for par in offset.par..source.size() {
             let s = source.at(par, chr).content;
-            if s.as_ref().is_empty() {
+            if s.is_empty() {
                 chr = 0;
                 continue;
             }
-            if let Some(layout) = vis_iter.next() {
-                func(layout, s.as_ref());
+            if let Some(layout_proxy) = vis_iter.next() {
+                let layout = layout_proxy.layout(source);
+                s.map(|t| func(&layout, t));
             } else {
                 break;
             }
@@ -158,9 +161,9 @@ where
     }
 }
 
-impl<T> Component for Paragraphs<T>
+impl<'a, T> Component for Paragraphs<T>
 where
-    T: ParagraphSource,
+    T: ParagraphSource<'a>,
 {
     type Msg = Never;
 
@@ -185,6 +188,17 @@ where
         )
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        Self::foreach_visible(
+            &self.source,
+            &self.visible,
+            self.offset,
+            &mut |layout, content| {
+                layout.render_text2(content, target);
+            },
+        )
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area);
@@ -194,9 +208,9 @@ where
     }
 }
 
-impl<T> Paginate for Paragraphs<T>
+impl<'a, T> Paginate for Paragraphs<T>
 where
-    T: ParagraphSource,
+    T: ParagraphSource<'a>,
 {
     fn page_count(&mut self) -> usize {
         // There's always at least one page.
@@ -220,9 +234,9 @@ pub mod trace {
 
     use super::*;
 
-    impl<T: ParagraphSource> crate::trace::Trace for Paragraphs<T> {
+    impl<'a, T: ParagraphSource<'a>> crate::trace::Trace for Paragraphs<T> {
         fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-            t.string("component", "Paragraphs");
+            t.string("component", "Paragraphs".into());
             t.in_list("paragraphs", &|par_list| {
                 Self::foreach_visible(
                     &self.source,
@@ -244,9 +258,9 @@ pub mod trace {
 }
 
 #[derive(Clone, Copy)]
-pub struct Paragraph<T> {
+pub struct Paragraph<'a> {
     /// Paragraph text.
-    content: T,
+    content: TString<'a>,
     /// Paragraph style.
     style: &'static TextStyle,
     /// Paragraph alignment.
@@ -260,10 +274,10 @@ pub struct Paragraph<T> {
     padding_bottom: i16,
 }
 
-impl<T> Paragraph<T> {
-    pub const fn new(style: &'static TextStyle, content: T) -> Self {
+impl<'a> Paragraph<'a> {
+    pub fn new<T: Into<TString<'a>>>(style: &'static TextStyle, content: T) -> Self {
         Self {
-            content,
+            content: content.into(),
             style,
             align: Alignment::Start,
             break_after: false,
@@ -298,25 +312,17 @@ impl<T> Paragraph<T> {
         self
     }
 
-    pub fn content(&self) -> &T {
+    pub fn content(&self) -> &TString<'a> {
         &self.content
     }
 
-    pub fn update(&mut self, content: T) {
-        self.content = content
+    pub fn update<T: Into<TString<'a>>>(&mut self, content: T) {
+        self.content = content.into()
     }
 
-    /// Copy style and replace content.
-    pub fn map<U>(&self, func: impl FnOnce(&T) -> U) -> Paragraph<U> {
-        Paragraph {
-            content: func(&self.content),
-            style: self.style,
-            align: self.align,
-            break_after: self.break_after,
-            no_break: self.no_break,
-            padding_top: self.padding_top,
-            padding_bottom: self.padding_bottom,
-        }
+    pub fn skip_prefix(&self, offset: usize) -> Paragraph<'a> {
+        let content = self.content.skip_prefix(offset);
+        Paragraph { content, ..*self }
     }
 
     fn layout(&self, area: Rect) -> TextLayout {
@@ -327,6 +333,36 @@ impl<T> Paragraph<T> {
                 .with_align(self.align)
                 .with_bounds(area)
         }
+    }
+}
+
+#[derive(Clone)]
+struct TextLayoutProxy {
+    offset: PageOffset,
+    bounds: Rect,
+}
+
+impl TextLayoutProxy {
+    fn new(offset: PageOffset, bounds: Rect) -> Self {
+        Self { offset, bounds }
+    }
+
+    fn layout(&self, source: &dyn ParagraphSource<'_>) -> TextLayout {
+        let content = source.at(self.offset.par, self.offset.chr);
+        let mut layout = content.layout(self.bounds);
+        layout.continues_from_prev_page = self.offset.chr > 0;
+
+        layout
+    }
+}
+
+impl Dimensions for TextLayoutProxy {
+    fn fit(&mut self, area: Rect) {
+        self.bounds = area;
+    }
+
+    fn area(&self) -> Rect {
+        self.bounds
     }
 }
 
@@ -350,16 +386,16 @@ impl PageOffset {
     ///
     /// If the returned remaining area is not None then it holds that
     /// `next_offset.par == self.par + 1`.
-    fn advance<S: StringType>(
+    fn advance(
         mut self,
         area: Rect,
-        source: &dyn ParagraphSource<StrType = S>,
+        source: &dyn ParagraphSource<'_>,
         full_height: i16,
-    ) -> (PageOffset, Option<Rect>, Option<TextLayout>) {
+    ) -> (PageOffset, Option<Rect>, Option<TextLayoutProxy>) {
         let paragraph = source.at(self.par, self.chr);
 
         // Skip empty paragraphs.
-        if paragraph.content.as_ref().is_empty() {
+        if paragraph.content().is_empty() {
             self.par += 1;
             self.chr = 0;
             return (self, Some(area), None);
@@ -383,12 +419,11 @@ impl PageOffset {
 
         // Find out the dimensions of the paragraph at given char offset.
         let mut layout = paragraph.layout(area);
-        if self.chr > 0 {
-            layout.continues_from_prev_page = true;
-        }
-        let fit = layout.fit_text(paragraph.content.as_ref());
+        layout.continues_from_prev_page = self.chr > 0;
+        let fit = paragraph.content().map(|t| layout.fit_text(t));
         let (used, remaining_area) = area.split_top(fit.height());
-        layout.bounds = used;
+
+        let layout = TextLayoutProxy::new(self, used);
 
         let page_full: bool;
         match fit {
@@ -416,9 +451,9 @@ impl PageOffset {
         )
     }
 
-    fn should_place_pair_on_next_page<S: StringType>(
-        this_paragraph: &Paragraph<S>,
-        next_paragraph: &Paragraph<S>,
+    fn should_place_pair_on_next_page(
+        this_paragraph: &Paragraph<'_>,
+        next_paragraph: &Paragraph<'_>,
         area: Rect,
         full_height: i16,
     ) -> bool {
@@ -430,13 +465,11 @@ impl PageOffset {
 
         let full_area = area.with_height(full_height);
         let key_height = this_paragraph
-            .layout(full_area)
-            .fit_text(this_paragraph.content.as_ref())
-            .height();
+            .content()
+            .map(|t| this_paragraph.layout(full_area).fit_text(t).height());
         let val_height = next_paragraph
-            .layout(full_area)
-            .fit_text(next_paragraph.content.as_ref())
-            .height();
+            .content()
+            .map(|t| next_paragraph.layout(full_area).fit_text(t).height());
         let screen_full_threshold = this_paragraph.style.text_font.line_height()
             + next_paragraph.style.text_font.line_height();
 
@@ -466,10 +499,10 @@ struct PageBreakIterator<'a, T> {
     current: Option<PageOffset>,
 }
 
-impl<T: ParagraphSource> PageBreakIterator<'_, T> {
-    fn dyn_next<S: StringType>(
+impl<'a, T: ParagraphSource<'a>> PageBreakIterator<'_, T> {
+    fn dyn_next(
         mut area: Rect,
-        paragraphs: &dyn ParagraphSource<StrType = S>,
+        paragraphs: &dyn ParagraphSource<'_>,
         mut offset: PageOffset,
     ) -> Option<PageOffset> {
         let full_height = area.height();
@@ -496,7 +529,7 @@ impl<T: ParagraphSource> PageBreakIterator<'_, T> {
 
 /// Yields indices to beginnings of successive pages. First value is always
 /// `PageOffset { 0, 0 }` even if the paragraph vector is empty.
-impl<T: ParagraphSource> Iterator for PageBreakIterator<'_, T> {
+impl<'a, T: ParagraphSource<'a>> Iterator for PageBreakIterator<'_, T> {
     /// `PageOffset` denotes the first paragraph that is rendered and a
     /// character offset in that paragraph.
     type Item = PageOffset;
@@ -524,6 +557,8 @@ pub struct Checklist<T> {
     current: usize,
     icon_current: Icon,
     icon_done: Icon,
+    icon_done_color: Option<Color>,
+    show_numerals: bool,
     /// How wide will the left icon column be
     check_width: i16,
     /// Offset of the icon representing DONE
@@ -532,7 +567,10 @@ pub struct Checklist<T> {
     current_offset: Offset,
 }
 
-impl<T> Checklist<T> {
+impl<'a, T> Checklist<T>
+where
+    T: ParagraphSource<'a>,
+{
     pub fn from_paragraphs(
         icon_current: Icon,
         icon_done: Icon,
@@ -545,6 +583,8 @@ impl<T> Checklist<T> {
             current,
             icon_current,
             icon_done,
+            icon_done_color: None,
+            show_numerals: false,
             check_width: 0,
             done_offset: Offset::zero(),
             current_offset: Offset::zero(),
@@ -566,6 +606,38 @@ impl<T> Checklist<T> {
         self
     }
 
+    pub fn with_icon_done_color(mut self, col: Color) -> Self {
+        self.icon_done_color = Some(col);
+        self
+    }
+
+    pub fn with_numerals(mut self) -> Self {
+        self.show_numerals = true;
+        self
+    }
+
+    fn render_left_column<'s>(&self, target: &mut impl Renderer<'s>) {
+        let current_visible = self.current.saturating_sub(self.paragraphs.offset.par);
+        for (i, layout) in self.paragraphs.visible.iter().enumerate() {
+            let l = &layout.layout(&self.paragraphs.source);
+            let base = Point::new(self.area.x0, l.bounds.y0);
+            if i < current_visible {
+                // finished tasks - labeled with icon "done"
+                let color = self.icon_done_color.unwrap_or(l.style.text_color);
+                self.render_icon(base + self.done_offset, self.icon_done, color, target)
+            } else {
+                // current and future tasks - ordinal numbers or icon on current task
+                if self.show_numerals {
+                    let num_offset = Offset::new(4, Font::NORMAL.visible_text_height("1"));
+                    self.render_numeral(base + num_offset, i, l.style.text_color, target);
+                } else if i == current_visible {
+                    let color = l.style.text_color;
+                    self.render_icon(base + self.current_offset, self.icon_current, color, target);
+                }
+            }
+        }
+    }
+
     fn paint_icon(&self, layout: &TextLayout, icon: Icon, offset: Offset) {
         let top_left = Point::new(self.area.x0, layout.bounds.y0);
         icon.draw(
@@ -575,11 +647,37 @@ impl<T> Checklist<T> {
             layout.style.background_color,
         );
     }
+
+    fn render_numeral<'s>(
+        &self,
+        base_point: Point,
+        n: usize,
+        color: Color,
+        target: &mut impl Renderer<'s>,
+    ) {
+        let numeral = uformat!("{}.", n + 1);
+        shape::Text::new(base_point, numeral.as_str())
+            .with_font(Font::SUB)
+            .with_fg(color)
+            .render(target);
+    }
+
+    fn render_icon<'s>(
+        &self,
+        base_point: Point,
+        icon: Icon,
+        color: Color,
+        target: &mut impl Renderer<'s>,
+    ) {
+        shape::ToifImage::new(base_point, icon.toif)
+            .with_fg(color)
+            .render(target);
+    }
 }
 
-impl<T> Component for Checklist<T>
+impl<'a, T> Component for Checklist<T>
 where
-    T: ParagraphSource,
+    T: ParagraphSource<'a>,
 {
     type Msg = Never;
 
@@ -599,11 +697,24 @@ where
 
         let current_visible = self.current.saturating_sub(self.paragraphs.offset.par);
         for layout in self.paragraphs.visible.iter().take(current_visible) {
-            self.paint_icon(layout, self.icon_done, self.done_offset);
+            self.paint_icon(
+                &layout.layout(&self.paragraphs.source),
+                self.icon_done,
+                self.done_offset,
+            );
         }
         if let Some(layout) = self.paragraphs.visible.iter().nth(current_visible) {
-            self.paint_icon(layout, self.icon_current, self.current_offset);
+            self.paint_icon(
+                &layout.layout(&self.paragraphs.source),
+                self.icon_current,
+                self.current_offset,
+            );
         }
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.paragraphs.render(target);
+        self.render_left_column(target);
     }
 
     #[cfg(feature = "ui_bounds")]
@@ -613,9 +724,9 @@ where
     }
 }
 
-impl<T> Paginate for Checklist<T>
+impl<'a, T> Paginate for Checklist<T>
 where
-    T: ParagraphSource,
+    T: ParagraphSource<'a>,
 {
     fn page_count(&mut self) -> usize {
         1
@@ -625,7 +736,7 @@ where
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T: ParagraphSource> crate::trace::Trace for Checklist<T> {
+impl<'a, T: ParagraphSource<'a>> crate::trace::Trace for Checklist<T> {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("Checklist");
         t.int("current", self.current as i64);
@@ -633,32 +744,37 @@ impl<T: ParagraphSource> crate::trace::Trace for Checklist<T> {
     }
 }
 
-pub trait VecExt<T> {
-    fn add(&mut self, paragraph: Paragraph<T>) -> &mut Self;
+#[cfg(feature = "micropython")]
+mod micropython {
+    use crate::{error::Error, micropython::obj::Obj, ui::layout::obj::ComponentMsgObj};
+    impl<'a, T: super::ParagraphSource<'a>> ComponentMsgObj for super::Checklist<T> {
+        fn msg_try_into_obj(&self, _msg: Self::Msg) -> Result<Obj, Error> {
+            unreachable!();
+        }
+    }
 }
 
-impl<T, const N: usize> VecExt<T> for Vec<Paragraph<T>, N>
-where
-    T: AsRef<str>,
-{
-    fn add(&mut self, paragraph: Paragraph<T>) -> &mut Self {
-        if paragraph.content.as_ref().is_empty() {
+pub trait VecExt<'a> {
+    fn add(&mut self, paragraph: Paragraph<'a>) -> &mut Self;
+}
+
+impl<'a, const N: usize> VecExt<'a> for Vec<Paragraph<'a>, N> {
+    fn add(&mut self, paragraph: Paragraph<'a>) -> &mut Self {
+        if paragraph.content().is_empty() {
             return self;
         }
         if self.push(paragraph).is_err() {
             #[cfg(feature = "ui_debug")]
-            panic!("paragraph list is full");
+            fatal_error!("Paragraph list is full");
         }
         self
     }
 }
 
-impl<T: StringType, const N: usize> ParagraphSource for Vec<Paragraph<T>, N> {
-    type StrType = T;
-
-    fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType> {
+impl<'a, const N: usize> ParagraphSource<'a> for Vec<Paragraph<'a>, N> {
+    fn at(&self, index: usize, offset: usize) -> Paragraph<'a> {
         let para = &self[index];
-        para.map(|content| content.skip_prefix(offset))
+        para.skip_prefix(offset)
     }
 
     fn size(&self) -> usize {
@@ -666,12 +782,10 @@ impl<T: StringType, const N: usize> ParagraphSource for Vec<Paragraph<T>, N> {
     }
 }
 
-impl<T: StringType, const N: usize> ParagraphSource for [Paragraph<T>; N] {
-    type StrType = T;
-
-    fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType> {
+impl<'a, const N: usize> ParagraphSource<'a> for [Paragraph<'a>; N] {
+    fn at(&self, index: usize, offset: usize) -> Paragraph<'a> {
         let para = &self[index];
-        para.map(|content| content.skip_prefix(offset))
+        para.skip_prefix(offset)
     }
 
     fn size(&self) -> usize {
@@ -679,12 +793,10 @@ impl<T: StringType, const N: usize> ParagraphSource for [Paragraph<T>; N] {
     }
 }
 
-impl<T: StringType> ParagraphSource for Paragraph<T> {
-    type StrType = T;
-
-    fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType> {
+impl<'a> ParagraphSource<'a> for Paragraph<'a> {
+    fn at(&self, index: usize, offset: usize) -> Paragraph<'a> {
         assert_eq!(index, 0);
-        self.map(|content| content.skip_prefix(offset))
+        self.skip_prefix(offset)
     }
 
     fn size(&self) -> usize {

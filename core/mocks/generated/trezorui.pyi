@@ -10,17 +10,12 @@ class Display:
     HEIGHT: int  # display height in pixels
     FONT_MONO: int  # id of monospace font
     FONT_NORMAL: int  # id of normal-width font
-    FONT_BOLD: int  # id of bold-width font
     FONT_DEMIBOLD: int  # id of demibold font
+    FONT_BOLD_UPPER: int # id of bold-width-uppercased font
 
     def __init__(self) -> None:
         """
         Initialize the display.
-        """
-
-    def clear(self) -> None:
-        """
-        Clear display with black color.
         """
 
     def refresh(self) -> None:

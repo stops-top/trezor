@@ -5,10 +5,20 @@
 #define SVC_SET_PRIORITY 2
 #define SVC_SHUTDOWN 4
 #define SVC_REBOOT_TO_BOOTLOADER 5
+#define SVC_GET_SYSTICK_VAL 6
+#define SVC_REBOOT 7
+
+#include <string.h>
+#include "boot_args.h"
+#include "common.h"
+#include "image.h"
+
+// from common.c
+extern uint32_t systick_val_copy;
 
 // from util.s
 extern void shutdown_privileged(void);
-extern void reboot_to_bootloader(void);
+extern void ensure_compatible_settings(void);
 
 static inline uint32_t is_mode_unprivileged(void) {
   uint32_t r0;
@@ -58,10 +68,17 @@ static inline void svc_shutdown(void) {
     shutdown_privileged();
   }
 }
-static inline void svc_reboot_to_bootloader(void) {
+
+void svc_reboot_to_bootloader(void);
+
+void svc_reboot(void);
+
+static inline uint32_t svc_get_systick_val(void) {
   if (is_mode_unprivileged() && !is_mode_handler()) {
-    __asm__ __volatile__("svc %0" ::"i"(SVC_REBOOT_TO_BOOTLOADER) : "memory");
+    __asm__ __volatile__("svc %0" ::"i"(SVC_GET_SYSTICK_VAL) : "memory");
+    return systick_val_copy;
   } else {
-    reboot_to_bootloader();
+    systick_val_copy = SysTick->VAL;
+    return systick_val_copy;
   }
 }

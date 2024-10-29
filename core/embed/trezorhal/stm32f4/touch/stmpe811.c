@@ -183,7 +183,7 @@ uint32_t I2cxTimeout =
 /**
  * @brief  I2Cx error treatment function
  */
-static void I2Cx_Error(void) { i2c_cycle(TOUCH_I2C_NUM); }
+static void I2Cx_Error(void) { i2c_cycle(TOUCH_I2C_INSTANCE); }
 
 /**
  * @brief  Writes a value in a register of the device through BUS.
@@ -194,7 +194,7 @@ static void I2Cx_Error(void) { i2c_cycle(TOUCH_I2C_NUM); }
 static void I2Cx_WriteData(uint8_t Addr, uint8_t Reg, uint8_t Value) {
   HAL_StatusTypeDef status = HAL_OK;
 
-  status = i2c_mem_write(TOUCH_I2C_NUM, Addr, (uint16_t)Reg,
+  status = i2c_mem_write(TOUCH_I2C_INSTANCE, Addr, (uint16_t)Reg,
                          I2C_MEMADD_SIZE_8BIT, &Value, 1, I2cxTimeout);
 
   /* Check the communication status */
@@ -215,7 +215,7 @@ static void I2Cx_WriteBuffer(uint8_t Addr, uint8_t Reg, uint8_t *pBuffer,
                              uint16_t Length) {
   HAL_StatusTypeDef status = HAL_OK;
 
-  status = i2c_mem_write(TOUCH_I2C_NUM, Addr, (uint16_t)Reg,
+  status = i2c_mem_write(TOUCH_I2C_INSTANCE, Addr, (uint16_t)Reg,
                          I2C_MEMADD_SIZE_8BIT, pBuffer, Length, I2cxTimeout);
 
   /* Check the communication status */
@@ -235,8 +235,8 @@ static uint8_t I2Cx_ReadData(uint8_t Addr, uint8_t Reg) {
   HAL_StatusTypeDef status = HAL_OK;
   uint8_t value = 0;
 
-  status = i2c_mem_read(TOUCH_I2C_NUM, Addr, Reg, I2C_MEMADD_SIZE_8BIT, &value,
-                        1, I2cxTimeout);
+  status = i2c_mem_read(TOUCH_I2C_INSTANCE, Addr, Reg, I2C_MEMADD_SIZE_8BIT,
+                        &value, 1, I2cxTimeout);
 
   /* Check the communication status */
   if (status != HAL_OK) {
@@ -258,7 +258,7 @@ static uint8_t I2Cx_ReadBuffer(uint8_t Addr, uint8_t Reg, uint8_t *pBuffer,
                                uint16_t Length) {
   HAL_StatusTypeDef status = HAL_OK;
 
-  status = i2c_mem_read(TOUCH_I2C_NUM, Addr, (uint16_t)Reg,
+  status = i2c_mem_read(TOUCH_I2C_INSTANCE, Addr, (uint16_t)Reg,
                         I2C_MEMADD_SIZE_8BIT, pBuffer, Length, I2cxTimeout);
 
   /* Check the communication status */
@@ -319,26 +319,6 @@ uint16_t IOE_ReadMultiple(uint8_t Addr, uint8_t Reg, uint8_t *pBuffer,
  * @param  Delay in ms
  */
 void IOE_Delay(uint32_t Delay) { HAL_Delay(Delay); }
-
-static void touch_active_pin_state(void) {
-  //  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);  // CTP_ON/PB10
-  //  HAL_Delay(10);  // we need to wait until the circuit fully kicks-in
-
-  GPIO_InitTypeDef GPIO_InitStructure;
-
-  // PC4 capacitive touch panel module (CTPM) interrupt (INT) input
-  GPIO_InitStructure.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStructure.Pull = GPIO_PULLUP;
-  GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStructure.Pin = GPIO_PIN_15;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStructure);
-  __HAL_GPIO_EXTI_CLEAR_FLAG(GPIO_PIN_15);
-
-  //  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);  // release CTPM reset
-  //  HAL_Delay(310);  // "Time of starting to report point after resetting" min
-  //  is
-  // 300ms, giving an extra 10ms
-}
 
 /**
  * @brief  Enable the AF for the selected IO pin(s).
@@ -439,17 +419,6 @@ void touch_set_mode(void) {
   IOE_Delay(2);
 }
 
-void touch_power_on(void) {
-  // turn on CTP circuitry
-  touch_active_pin_state();
-  HAL_Delay(50);
-}
-
-void touch_power_off(void) {
-  // turn off CTP circuitry
-  HAL_Delay(50);
-}
-
 /**
  * @brief  Reset the stmpe811 by Software.
  * @param  DeviceAddr: Device address on communication Bus.
@@ -470,52 +439,7 @@ void stmpe811_Reset() {
   IOE_Delay(2);
 }
 
-void touch_init(void) {
-  GPIO_InitTypeDef GPIO_InitStructure;
-
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-
-  // PC4 capacitive touch panel module (CTPM) interrupt (INT) input
-  GPIO_InitStructure.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStructure.Pull = GPIO_PULLUP;
-  GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStructure.Pin = GPIO_PIN_15;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStructure);
-  __HAL_GPIO_EXTI_CLEAR_FLAG(GPIO_PIN_15);
-
-  stmpe811_Reset();
-  touch_set_mode();
-  touch_sensitivity(0x06);
-}
-
-void touch_sensitivity(uint8_t value) {
-  // set panel threshold (TH_GROUP) - default value is 0x12
-  //  uint8_t touch_panel_threshold[] = {0x80, value};
-  //  ensure(sectrue *
-  //                 (HAL_OK == HAL_I2C_Master_Transmit(
-  //                         &I2c_handle, TOUCH_ADDRESS, touch_panel_threshold,
-  //                         sizeof(touch_panel_threshold), 10)),
-  //         NULL);
-}
-
-uint32_t touch_is_detected(void) {
-  uint8_t state = ((IOE_Read(TS_I2C_ADDRESS, STMPE811_REG_TSC_CTRL) &
-                    (uint8_t)STMPE811_TS_CTRL_STATUS) == (uint8_t)0x80);
-  return state > 0;
-}
-
-uint32_t touch_active(void) {
-  // check the interrupt line coming in from the CTPM.
-  // the line make a short pulse, which sets an interrupt flag when new data is
-  // available.
-  // Reference section 1.2 of "Application Note for FT6x06 CTPM". we
-  // configure the touch controller to use "interrupt trigger mode".
-
-  //  uint32_t event = __HAL_GPIO_EXTI_GET_FLAG(GPIO_PIN_15);
-  //  if (event != 0) {
-  //    __HAL_GPIO_EXTI_CLEAR_FLAG(GPIO_PIN_15);
-  //  }
-
+static uint32_t touch_active(void) {
   uint8_t state;
   uint8_t ret = 0;
 
@@ -534,17 +458,6 @@ uint32_t touch_active(void) {
   }
 
   return ret;
-}
-
-uint32_t check_timeout(uint32_t prev, uint32_t timeout) {
-  uint32_t current = hal_ticks_ms();
-  uint32_t diff = current - prev;
-
-  if (diff >= timeout) {
-    return 1;
-  }
-
-  return 0;
 }
 
 /**
@@ -644,58 +557,87 @@ void BSP_TS_GetState(TS_StateTypeDef *TsState) {
   }
 }
 
-uint32_t touch_read(void) {
-  TS_StateTypeDef state = {0};
-  static uint32_t xy = 0;
-  static TS_StateTypeDef state_last = {0};
-  // static uint16_t first = 1;
-  static uint16_t touching = 0;
+typedef struct {
+  // Set if driver is initialized
+  secbool initialized;
+  // Last lower-level driver state
+  TS_StateTypeDef prev_state;
 
-  if (!touch_is_detected()) {
-    if (touching) {
-      // touch end
-      memcpy(&state_last, &state, sizeof(state));
-      touching = 0;
-      return TOUCH_END | xy;
-    }
-    return 0;
+} touch_driver_t;
+
+// Touch driver instance
+static touch_driver_t g_touch_driver = {
+    .initialized = secfalse,
+};
+
+secbool touch_init(void) {
+  touch_driver_t *driver = &g_touch_driver;
+
+  if (driver->initialized != sectrue) {
+    stmpe811_Reset();
+    touch_set_mode();
+
+    driver->initialized = sectrue;
   }
 
-  BSP_TS_GetState(&state);
+  return driver->initialized;
+}
 
-  if (state.TouchDetected == 0) {
-    return 0;
+void touch_deinit(void) {
+  touch_driver_t *driver = &g_touch_driver;
+
+  if (driver->initialized == sectrue) {
+    // Not implemented properly
+
+    memset(driver, 0, sizeof(touch_driver_t));
   }
+}
 
-  //  if (first != 0) {
-  //    memcpy(&state_last, &state, sizeof(state));
-  //    first = 0;
-  //    return 0;
-  //  }
+secbool touch_ready(void) {
+  touch_driver_t *driver = &g_touch_driver;
+  return driver->initialized;
+}
 
-  if ((state.TouchDetected == 0 && state_last.TouchDetected == 0) ||
-      memcmp(&state, &state_last, sizeof(state)) == 0) {
-    // no change detected
-    return 0;
-  }
+secbool touch_set_sensitivity(uint8_t value) {
+  // Not implemented for the discovery kit
+  return sectrue;
+}
 
-  xy = touch_pack_xy(state.X, state.Y);
-
-  if (state.TouchDetected && !state_last.TouchDetected) {
-    // touch start
-    memcpy(&state_last, &state, sizeof(state));
-    touching = 1;
-    return TOUCH_START | xy;
-  } else if (!state.TouchDetected && state_last.TouchDetected) {
-    // touch end
-    memcpy(&state_last, &state, sizeof(state));
-    touching = 0;
-    return TOUCH_END | xy;
-  } else {
-    // touch move
-    memcpy(&state_last, &state, sizeof(state));
-    return TOUCH_MOVE | xy;
-  }
-
+uint8_t touch_get_version(void) {
+  // Not implemented for the discovery kit
   return 0;
+}
+
+secbool touch_activity(void) {
+  uint8_t state = ((IOE_Read(TS_I2C_ADDRESS, STMPE811_REG_TSC_CTRL) &
+                    (uint8_t)STMPE811_TS_CTRL_STATUS) == (uint8_t)0x80);
+  return state > 0 ? sectrue : secfalse;
+}
+
+uint32_t touch_get_event(void) {
+  touch_driver_t *driver = &g_touch_driver;
+
+  if (driver->initialized != sectrue) {
+    return 0;
+  }
+
+  TS_StateTypeDef new_state = {0};
+  BSP_TS_GetState(&new_state);
+
+  uint32_t event = 0;
+
+  if (new_state.TouchDetected && !driver->prev_state.TouchDetected) {
+    uint32_t xy = touch_pack_xy(new_state.X, new_state.Y);
+    event = TOUCH_START | xy;
+  } else if (!new_state.TouchDetected && driver->prev_state.TouchDetected) {
+    uint32_t xy = touch_pack_xy(driver->prev_state.X, driver->prev_state.Y);
+    event = TOUCH_END | xy;
+  } else if (new_state.TouchDetected) {
+    uint32_t xy = touch_pack_xy(new_state.X, new_state.Y);
+    event = TOUCH_MOVE | xy;
+  }
+
+  driver->prev_state = new_state;
+
+  return event;
 }

@@ -131,7 +131,7 @@
   "bitcoin:SYS": {
     "type": "blockbook",
     "url": [
-      "https://blockbook.elint.services"
+      "https://blockbook.syscoin.org"
     ]
   },
   "bitcoin:TEST": {
@@ -236,6 +236,21 @@
     "type": "blockfrost",
     "url": [
       "wss://trezor-cardano-preview.blockfrost.io"
+    ]
+  },
+  "misc:SOL": {
+    "type": "solana",
+    "url": [
+      "https://solana1.trezor.io",
+      "https://solana2.trezor.io",
+      "https://solana3.trezor.io",
+      "https://solana4.trezor.io"
+  ]
+  },
+  "misc:DSOL": {
+    "type": "solana",
+    "url": [
+      "https://solana-dev.trezor.io"
     ]
   }
 }

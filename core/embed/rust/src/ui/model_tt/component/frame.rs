@@ -1,18 +1,22 @@
 use super::theme;
-use crate::ui::{
-    component::{
-        base::ComponentExt, label::Label, text::TextStyle, Child, Component, Event, EventCtx,
+use crate::{
+    strutil::TString,
+    ui::{
+        component::{
+            base::ComponentExt, label::Label, text::TextStyle, Child, Component, Event, EventCtx,
+        },
+        display::Icon,
+        geometry::{Alignment, Insets, Offset, Rect},
+        model_tt::component::{Button, ButtonMsg, CancelInfoConfirmMsg},
+        shape::Renderer,
     },
-    display::Icon,
-    geometry::{Alignment, Insets, Offset, Rect},
-    model_tt::component::{Button, ButtonMsg, CancelInfoConfirmMsg},
 };
 
-pub struct Frame<T, U> {
+pub struct Frame<T> {
     border: Insets,
-    title: Child<Label<U>>,
-    subtitle: Option<Child<Label<U>>>,
-    button: Option<Child<Button<&'static str>>>,
+    title: Child<Label<'static>>,
+    subtitle: Option<Child<Label<'static>>>,
+    button: Option<Child<Button>>,
     button_msg: CancelInfoConfirmMsg,
     content: Child<T>,
 }
@@ -22,12 +26,16 @@ pub enum FrameMsg<T> {
     Button(CancelInfoConfirmMsg),
 }
 
-impl<T, U> Frame<T, U>
+impl<T> Frame<T>
 where
     T: Component,
-    U: AsRef<str>,
 {
-    pub fn new(style: TextStyle, alignment: Alignment, title: U, content: T) -> Self {
+    pub fn new(
+        style: TextStyle,
+        alignment: Alignment,
+        title: TString<'static>,
+        content: T,
+    ) -> Self {
         Self {
             title: Child::new(Label::new(title, alignment, style)),
             subtitle: None,
@@ -38,15 +46,15 @@ where
         }
     }
 
-    pub fn left_aligned(style: TextStyle, title: U, content: T) -> Self {
+    pub fn left_aligned(style: TextStyle, title: TString<'static>, content: T) -> Self {
         Self::new(style, Alignment::Start, title, content)
     }
 
-    pub fn right_aligned(style: TextStyle, title: U, content: T) -> Self {
+    pub fn right_aligned(style: TextStyle, title: TString<'static>, content: T) -> Self {
         Self::new(style, Alignment::End, title, content)
     }
 
-    pub fn centered(style: TextStyle, title: U, content: T) -> Self {
+    pub fn centered(style: TextStyle, title: TString<'static>, content: T) -> Self {
         Self::new(style, Alignment::Center, title, content)
     }
 
@@ -55,7 +63,7 @@ where
         self
     }
 
-    pub fn with_subtitle(mut self, style: TextStyle, subtitle: U) -> Self {
+    pub fn with_subtitle(mut self, style: TextStyle, subtitle: TString<'static>) -> Self {
         self.subtitle = Some(Child::new(Label::new(
             subtitle,
             self.title.inner().alignment(),
@@ -91,7 +99,7 @@ where
         self.content.inner()
     }
 
-    pub fn update_title(&mut self, ctx: &mut EventCtx, new_title: U) {
+    pub fn update_title(&mut self, ctx: &mut EventCtx, new_title: TString<'static>) {
         self.title.mutate(ctx, |ctx, t| {
             t.set_text(new_title);
             t.request_complete_repaint(ctx)
@@ -110,10 +118,9 @@ where
     }
 }
 
-impl<T, U> Component for Frame<T, U>
+impl<T> Component for Frame<T>
 where
     T: Component,
-    U: AsRef<str>,
 {
     type Msg = FrameMsg<T::Msg>;
 
@@ -169,6 +176,13 @@ where
         self.content.paint();
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.title.render(target);
+        self.subtitle.render(target);
+        self.button.render(target);
+        self.content.render(target);
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.title.bounds(sink);
@@ -179,10 +193,9 @@ where
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T, U> crate::trace::Trace for Frame<T, U>
+impl<T> crate::trace::Trace for Frame<T>
 where
     T: crate::trace::Trace,
-    U: AsRef<str>,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("Frame");

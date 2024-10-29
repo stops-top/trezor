@@ -14,11 +14,14 @@
 # You should have received a copy of the License along with this library.
 # If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
 
+from __future__ import annotations
+
 import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, cast
 
 import click
+import requests
 
 from .. import device, messages, toif
 from . import AliasedGroup, ChoiceType, with_client
@@ -61,7 +64,7 @@ def image_to_t1(filename: Path) -> bytes:
             f"Image is not 128x64, but {image.size}. Do you want to resize it automatically?",
             default=True,
         ):
-            image = image.resize(T1_TR_IMAGE_SIZE, Image.ANTIALIAS)
+            image = image.resize(T1_TR_IMAGE_SIZE, Image.Resampling.LANCZOS)
         else:
             raise click.ClickException("Wrong size of the image - should be 128x64")
 
@@ -96,7 +99,7 @@ def image_to_toif(filename: Path, width: int, height: int, greyscale: bool) -> b
             f"Image is not {width}x{height}, but {image.size[0]}x{image.size[1]}. Do you want to resize it automatically?",
             default=True,
         ):
-            image = image.resize((width, height), Image.ANTIALIAS)
+            image = image.resize((width, height), Image.Resampling.LANCZOS)
         else:
             raise click.ClickException(
                 f"Wrong size of image - should be {width}x{height}"
@@ -114,7 +117,7 @@ def image_to_toif(filename: Path, width: int, height: int, greyscale: bool) -> b
     return toif_image.to_bytes()
 
 
-def image_to_jpeg(filename: Path, width: int, height: int) -> bytes:
+def image_to_jpeg(filename: Path, width: int, height: int, quality: int = 90) -> bytes:
     if filename.suffix in (".jpg", ".jpeg") and not PIL_AVAILABLE:
         click.echo("Warning: Image library is missing, skipping image validation.")
         return filename.read_bytes()
@@ -134,7 +137,7 @@ def image_to_jpeg(filename: Path, width: int, height: int) -> bytes:
             f"Image is not {width}x{height}, but {image.size[0]}x{image.size[1]}. Do you want to resize it automatically?",
             default=True,
         ):
-            image = image.resize((width, height), Image.ANTIALIAS)
+            image = image.resize((width, height), Image.Resampling.LANCZOS)
         else:
             raise click.ClickException(
                 f"Wrong size of image - should be {width}x{height}"
@@ -144,7 +147,7 @@ def image_to_jpeg(filename: Path, width: int, height: int) -> bytes:
         image = image.convert("RGB")
 
     buf = io.BytesIO()
-    image.save(buf, format="jpeg", progressive=False)
+    image.save(buf, format="jpeg", progressive=False, quality=quality)
     return buf.getvalue()
 
 
@@ -204,6 +207,58 @@ def label(client: "TrezorClient", label: str) -> str:
 
 
 @cli.command()
+@with_client
+def brightness(client: "TrezorClient") -> str:
+    """Set display brightness."""
+    return device.set_brightness(client)
+
+
+@cli.command()
+@click.argument("enable", type=ChoiceType({"on": True, "off": False}))
+@with_client
+def haptic_feedback(client: "TrezorClient", enable: bool) -> str:
+    """Enable or disable haptic feedback."""
+    return device.apply_settings(client, haptic_feedback=enable)
+
+
+@cli.command()
+@click.argument("path_or_url", required=False)
+@click.option(
+    "-r", "--remove", is_flag=True, default=False, help="Switch back to english."
+)
+@click.option("-d/-D", "--display/--no-display", default=None)
+@with_client
+def language(
+    client: "TrezorClient", path_or_url: str | None, remove: bool, display: bool | None
+) -> str:
+    """Set new language with translations."""
+    if remove != (path_or_url is None):
+        raise click.ClickException("Either provide a path or URL or use --remove")
+
+    if remove:
+        language_data = b""
+    else:
+        assert path_or_url is not None
+        if path_or_url.endswith(".json"):
+            raise click.ClickException(
+                "Provided file is a JSON file, not a blob file.\n"
+                "Generate blobs by running `python core/translations/cli.py gen` in root."
+            )
+        try:
+            language_data = Path(path_or_url).read_bytes()
+        except Exception:
+            try:
+                language_data = requests.get(path_or_url).content
+            except Exception:
+                raise click.ClickException(
+                    f"Failed to load translations from {path_or_url}"
+                ) from None
+    return device.change_language(
+        client, language_data=language_data, show_display=display
+    )
+
+
+@cli.command()
 @click.argument("rotation", type=ChoiceType(ROTATION))
 @with_client
 def display_rotation(client: "TrezorClient", rotation: int) -> str:
@@ -252,8 +307,9 @@ def flags(client: "TrezorClient", flags: str) -> str:
 @click.option(
     "-f", "--filename", "_ignore", is_flag=True, hidden=True, expose_value=False
 )
+@click.option("-q", "--quality", type=int, default=90, help="JPEG quality (0-100)")
 @with_client
-def homescreen(client: "TrezorClient", filename: str) -> str:
+def homescreen(client: "TrezorClient", filename: str, quality: int) -> str:
     """Set new homescreen.
 
     To revert to default homescreen, use 'trezorctl set homescreen default'
@@ -279,7 +335,7 @@ def homescreen(client: "TrezorClient", filename: str) -> str:
                     if client.features.homescreen_height is not None
                     else 240
                 )
-                img = image_to_jpeg(path, width, height)
+                img = image_to_jpeg(path, width, height, quality)
             elif client.features.homescreen_format == messages.HomescreenFormat.ToiG:
                 width = client.features.homescreen_width
                 height = client.features.homescreen_height

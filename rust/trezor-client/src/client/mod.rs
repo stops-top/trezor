@@ -8,6 +8,11 @@ mod ethereum;
 #[cfg(feature = "ethereum")]
 pub use ethereum::*;
 
+#[cfg(feature = "solana")]
+mod solana;
+#[cfg(feature = "solana")]
+pub use solana::*;
+
 pub mod common;
 pub use common::*;
 
@@ -164,10 +169,12 @@ impl Trezor {
         req.set_pin_protection(pin_protection);
         req.set_label(label);
         req.set_enforce_wordlist(true);
-        req.set_dry_run(dry_run);
-        req.set_type(
-            protos::recovery_device::RecoveryDeviceType::RecoveryDeviceType_ScrambledWords,
-        );
+        if dry_run {
+            req.set_type(protos::RecoveryType::DryRun);
+        } else {
+            req.set_type(protos::RecoveryType::NormalRecovery);
+        }
+        req.set_input_method(protos::recovery_device::RecoveryDeviceInputMethod::ScrambledWords);
         //TODO(stevenroose) support languages
         req.set_language("english".to_owned());
         self.call(req, Box::new(|_, _| Ok(())))
@@ -237,5 +244,18 @@ impl Trezor {
         req.set_challenge_visual("".to_owned());
         req.set_ecdsa_curve_name(curve);
         self.call(req, Box::new(|_, m| Ok(m.signature().to_owned())))
+    }
+
+    pub fn get_ecdh_session_key(
+        &mut self,
+        identity: protos::IdentityType,
+        peer_public_key: Vec<u8>,
+        curve: String,
+    ) -> Result<TrezorResponse<'_, protos::ECDHSessionKey, protos::ECDHSessionKey>> {
+        let mut req = protos::GetECDHSessionKey::new();
+        req.identity = MessageField::some(identity);
+        req.set_peer_public_key(peer_public_key);
+        req.set_ecdsa_curve_name(curve);
+        self.call(req, Box::new(|_, m| Ok(m)))
     }
 }

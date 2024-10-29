@@ -9,20 +9,17 @@ if TYPE_CHECKING:
 
     from typing_extensions import Protocol
 
-    Bip32Path = Sequence[int]
+    Bip32Path = list[int]
     Slip21Path = Sequence[bytes]
     PathType = TypeVar("PathType", Bip32Path, Slip21Path, contravariant=True)
 
     class PathSchemaType(Protocol):
-        def match(self, path: Bip32Path) -> bool:
-            ...
+        def match(self, path: Bip32Path) -> bool: ...
 
     class KeychainValidatorType(Protocol):
-        def is_in_keychain(self, path: Bip32Path) -> bool:
-            ...
+        def is_in_keychain(self, path: Bip32Path) -> bool: ...
 
-        def verify_path(self, path: Bip32Path) -> None:
-            ...
+        def verify_path(self, path: Bip32Path) -> None: ...
 
 
 class Interval:
@@ -293,7 +290,7 @@ class PathSchema:
                     # Which in practice it is, the only non-Collection is Interval.
                     # But we're not going to introduce an additional type requirement
                     # for the sake of __repr__ that doesn't exist in production anyway
-                    collection: Collection[int] = component  # type: ignore [Expression of type "Container[int]" cannot be assigned to declared type "Collection[int]"]
+                    collection: Collection[int] = component  # type: ignore [Expression of type "Container[int]" is incompatible with declared type "Collection[int]"]
                     component_str = ",".join(str(unharden(i)) for i in collection)
                     if len(collection) > 1:
                         component_str = "[" + component_str + "]"
@@ -372,3 +369,46 @@ def address_n_to_str(address_n: Iterable[int]) -> str:
 
 def unharden(item: int) -> int:
     return item ^ (item & HARDENED)
+
+
+def get_account_name(
+    coin: str, address_n: Bip32Path, pattern: str | Sequence[str], slip44_id: int
+) -> str | None:
+    account_num = _get_account_num(address_n, pattern, slip44_id)
+    if account_num is None:
+        return None
+    return f"{coin} #{account_num}"
+
+
+def _get_account_num(
+    address_n: Bip32Path, pattern: str | Sequence[str], slip44_id: int
+) -> int | None:
+    if isinstance(pattern, str):
+        pattern = [pattern]
+
+    # Trying all possible patterns - at least one should match
+    for patt in pattern:
+        try:
+            return _get_account_num_single(address_n, patt, slip44_id)
+        except ValueError:
+            pass
+
+    # This function should not raise
+    return None
+
+
+def _get_account_num_single(address_n: Bip32Path, pattern: str, slip44_id: int) -> int:
+    # Validating address_n is compatible with pattern
+    if not PathSchema.parse(pattern, slip44_id).match(address_n):
+        raise ValueError
+
+    account_pos = pattern.find("/account")
+    if account_pos >= 0:
+        i = pattern.count("/", 0, account_pos)
+        num = address_n[i]
+        if is_hardened(num):
+            return unharden(num) + 1
+        else:
+            return num + 1
+    else:
+        raise ValueError

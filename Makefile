@@ -9,7 +9,7 @@ PY_FILES = $(shell find . -type f -name '*.py'   | sed 'sO^\./OO' | grep -f ./to
 C_FILES =  $(shell find . -type f -name '*.[ch]' | grep -f ./tools/style.c.include  | grep -v -f ./tools/style.c.exclude )
 
 
-style_check: pystyle_check ruststyle_check cstyle_check changelog_check yaml_check editor_check ## run all style checks
+style_check: pystyle_check ruststyle_check cstyle_check changelog_check yaml_check docs_summary_check editor_check ## run all style checks
 
 style: pystyle ruststyle cstyle ## apply all code styles (C+Rust+Py)
 
@@ -65,7 +65,7 @@ yaml_check: ## check yaml formatting
 	yamllint .
 
 editor_check: ## check editorconfig formatting
-	editorconfig-checker -exclude '.*\.(so|dat|toif|der)'
+	editorconfig-checker -exclude '.*\.(so|dat|toif|der)|^crypto/aes/'
 
 cstyle_check: ## run code style check on low-level C code
 	clang-format --version
@@ -107,10 +107,16 @@ mocks_check: ## check validity of mock python headers
 	flake8 core/mocks/generated
 
 templates: icons ## rebuild coin lists from definitions in common
-	./core/tools/build_templates
+	make -C core templates
 
 templates_check: ## check that coin lists are up to date
-	./core/tools/build_templates --check
+	make -C core templates_check
+
+solana_templates: ## rebuild Solana instruction template file
+	python tools/build_solana_templates.py
+
+solana_templates_check: ## check that Solana instruction template file is up to date
+	python tools/build_solana_templates.py --check
 
 icons: ## generate FIDO service icons
 	python3 core/tools/build_icons.py
@@ -118,11 +124,13 @@ icons: ## generate FIDO service icons
 icons_check: ## generate FIDO service icons
 	python3 core/tools/build_icons.py --check
 
-protobuf: ## generate python protobuf headers
+protobuf: ## generate python and rust protobuf headers
 	./tools/build_protobuf
+	./rust/trezor-client/scripts/build_protos
 
 protobuf_check: ## check that generated protobuf headers are up to date
 	./tools/build_protobuf --check
+	./rust/trezor-client/scripts/build_protos --check
 
 ci_docs: ## generate CI documentation
 	./tools/generate_ci_docs.py
@@ -130,12 +138,16 @@ ci_docs: ## generate CI documentation
 ci_docs_check: ## check that generated CI documentation is up to date
 	./tools/generate_ci_docs.py --check
 
+docs_summary_check: ## check if there are unlinked documentation files
+	@echo [DOCS-SUMMARY-MARKDOWN-CHECK]
+	python3 tools/check_docs_summary.py
+
 vendorheader: ## generate vendor header
 	./core/embed/vendorheader/generate.sh --quiet
 
 vendorheader_check: ## check that vendor header is up to date
 	./core/embed/vendorheader/generate.sh --quiet --check
 
-gen:  mocks icons templates protobuf ci_docs vendorheader ## regenerate auto-generated files from sources
+gen:  templates mocks icons protobuf ci_docs vendorheader solana_templates ## regenerate auto-generated files from sources
 
-gen_check: mocks_check icons_check templates_check protobuf_check ci_docs_check vendorheader_check ## check validity of auto-generated files
+gen_check: templates_check mocks_check icons_check protobuf_check ci_docs_check vendorheader_check solana_templates_check ## check validity of auto-generated files

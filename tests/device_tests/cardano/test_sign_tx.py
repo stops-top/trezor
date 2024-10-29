@@ -16,28 +16,31 @@
 
 import pytest
 
-from trezorlib import cardano, device, messages
+from trezorlib import cardano, device, messages, models
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.exceptions import TrezorFailure
 
 from ...common import parametrize_using_common_fixtures
+from ...input_flows import InputFlowConfirmAllWarnings
 
 pytestmark = [
     pytest.mark.altcoin,
     pytest.mark.cardano,
-    pytest.mark.skip_t1,
+    pytest.mark.skip_t1b1,
 ]
 
 
 def show_details_input_flow(client: Client):
     yield
     client.debug.wait_layout()
-    # Clicking for model T, pressing right for model R
-    if client.features.model == "T":
+    # Touch screen click vs pressing right for T2B1
+    if client.model in (models.T2T1, models.T3T1):
         SHOW_ALL_BUTTON_POSITION = (143, 167)
         client.debug.click(SHOW_ALL_BUTTON_POSITION)
-    elif client.features.model == "R":
+    elif client.model is models.T2B1:
         client.debug.press_yes()
+    else:
+        raise NotImplementedError
     # reset ui flow to continue "automatically"
     client.ui.input_flow = None
     yield
@@ -51,13 +54,18 @@ def show_details_input_flow(client: Client):
     "cardano/sign_tx.slip39.json",
 )
 def test_cardano_sign_tx(client: Client, parameters, result):
-    response = call_sign_tx(client, parameters)
+    response = call_sign_tx(
+        client,
+        parameters,
+        input_flow=lambda client: InputFlowConfirmAllWarnings(client).get(),
+    )
     assert response == _transform_expected_result(result)
 
 
+@pytest.mark.skip_t3t1(reason="Not yet implemented in new UI")
 @parametrize_using_common_fixtures("cardano/sign_tx.show_details.json")
 def test_cardano_sign_tx_show_details(client: Client, parameters, result):
-    response = call_sign_tx(client, parameters, show_details_input_flow)
+    response = call_sign_tx(client, parameters, show_details_input_flow, chunkify=True)
     assert response == _transform_expected_result(result)
 
 
@@ -72,7 +80,7 @@ def test_cardano_sign_tx_failed(client: Client, parameters, result):
         call_sign_tx(client, parameters, None)
 
 
-def call_sign_tx(client: Client, parameters, input_flow=None):
+def call_sign_tx(client: Client, parameters, input_flow=None, chunkify: bool = False):
     client.init_device(new_session=True, derive_cardano=True)
 
     signing_mode = messages.CardanoTxSigningMode.__members__[parameters["signing_mode"]]
@@ -136,6 +144,8 @@ def call_sign_tx(client: Client, parameters, input_flow=None):
             reference_inputs=reference_inputs,
             additional_witness_requests=additional_witness_requests,
             include_network_id=parameters["include_network_id"],
+            chunkify=chunkify,
+            tag_cbor_sets=parameters["tag_cbor_sets"],
         )
 
 
@@ -150,9 +160,11 @@ def _transform_expected_result(result):
                 "type": witness["type"],
                 "pub_key": bytes.fromhex(witness["pub_key"]),
                 "signature": bytes.fromhex(witness["signature"]),
-                "chain_code": bytes.fromhex(witness["chain_code"])
-                if witness["chain_code"]
-                else None,
+                "chain_code": (
+                    bytes.fromhex(witness["chain_code"])
+                    if witness["chain_code"]
+                    else None
+                ),
             }
             for witness in result["witnesses"]
         ],

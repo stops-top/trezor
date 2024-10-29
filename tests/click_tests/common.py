@@ -3,7 +3,10 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from trezorlib import models
+
 from .. import buttons
+from .. import translations as TR
 
 if TYPE_CHECKING:
     from trezorlib.debuglink import DebugLink, LayoutContent
@@ -43,19 +46,38 @@ def get_char_category(char: str) -> PassphraseCategory:
 
 
 def go_next(debug: "DebugLink", wait: bool = False) -> "LayoutContent" | None:
-    if debug.model == "T":
+    if debug.model in (models.T2T1,):
         return debug.click(buttons.OK, wait=wait)  # type: ignore
-    elif debug.model == "R":
+    elif debug.model in (models.T2B1,):
         return debug.press_right(wait=wait)  # type: ignore
+    elif debug.model in (models.T3T1,):
+        return debug.swipe_up(wait=wait)
     else:
         raise RuntimeError("Unknown model")
 
 
-def go_back(debug: "DebugLink", wait: bool = False) -> "LayoutContent" | None:
-    if debug.model == "T":
+def tap_to_confirm(debug: "DebugLink", wait: bool = False) -> "LayoutContent" | None:
+    if debug.model in (models.T2T1,):
+        return debug.read_layout()  # type: ignore
+    elif debug.model in (models.T2B1,):
+        return debug.read_layout()  # type: ignore
+    elif debug.model in (models.T3T1,):
+        return debug.click(buttons.TAP_TO_CONFIRM, wait=wait)
+    else:
+        raise RuntimeError("Unknown model")
+
+
+def go_back(
+    debug: "DebugLink", wait: bool = False, r_middle: bool = False
+) -> "LayoutContent" | None:
+    if debug.model in (models.T2T1, models.T3T1):
         return debug.click(buttons.CANCEL, wait=wait)  # type: ignore
-    elif debug.model == "R":
-        return debug.press_left(wait=wait)  # type: ignore
+    elif debug.model in (models.T2B1,):
+
+        if r_middle:
+            return debug.press_middle(wait=wait)  # type: ignore
+        else:
+            return debug.press_left(wait=wait)  # type: ignore
     else:
         raise RuntimeError("Unknown model")
 
@@ -65,6 +87,7 @@ def navigate_to_action_and_press(
     wanted_action: str,
     all_actions: list[str],
     is_carousel: bool = True,
+    hold_ms: int = 0,
 ) -> None:
     """Navigate to the button with certain action and press it"""
     # Orient
@@ -94,8 +117,22 @@ def navigate_to_action_and_press(
             is_carousel=is_carousel,
         )
 
-    # Press
-    debug.press_middle(wait=True)
+    # Press or hold
+    if hold_ms:
+        debug.press_middle_htc(1000)
+    else:
+        debug.press_middle(wait=True)
+
+
+def unlock_gesture(debug: "DebugLink", wait: bool = False) -> "LayoutContent" | None:
+    if debug.model in (models.T2T1,):
+        return debug.click(buttons.OK, wait=wait)  # type: ignore
+    elif debug.model in (models.T2B1,):
+        return debug.press_right(wait=wait)  # type: ignore
+    elif debug.model in (models.T3T1,):
+        return debug.click(buttons.TAP_TO_CONFIRM, wait=wait)  # type: ignore
+    else:
+        raise RuntimeError("Unknown model")
 
 
 def _get_action_index(wanted_action: str, all_actions: list[str]) -> int:
@@ -138,3 +175,7 @@ def _move_one_closer(
             return debug.press_left(wait=True)
         else:
             return debug.press_right(wait=True)
+
+
+def get_possible_btn_texts(path: str) -> str:
+    return "|".join(TR.translate(path))

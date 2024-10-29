@@ -33,13 +33,16 @@ def _get_xpubs(
 async def get_address(msg: GetAddress, keychain: Keychain, coin: CoinInfo) -> Address:
     from trezor.enums import InputScriptType
     from trezor.messages import Address
-    from trezor.ui.layouts import show_address
+    from trezor.ui.layouts import confirm_multisig_warning, show_address
 
     from apps.common.address_mac import get_address_mac
     from apps.common.paths import address_n_to_str, validate_path
 
     from . import addresses
-    from .keychain import address_n_to_name, validate_path_against_script_type
+    from .keychain import (
+        address_n_to_name_or_unknown,
+        validate_path_against_script_type,
+    )
     from .multisig import multisig_pubkey_index
 
     multisig = msg.multisig  # local_cache_attribute
@@ -100,6 +103,8 @@ async def get_address(msg: GetAddress, keychain: Keychain, coin: CoinInfo) -> Ad
                 pubnodes = [hd.node for hd in multisig.pubkeys]
             multisig_index = multisig_pubkey_index(multisig, node.public_key())
 
+            await confirm_multisig_warning()
+
             await show_address(
                 address_short,
                 case_sensitive=address_case_sensitive,
@@ -107,21 +112,17 @@ async def get_address(msg: GetAddress, keychain: Keychain, coin: CoinInfo) -> Ad
                 multisig_index=multisig_index,
                 xpubs=_get_xpubs(coin, multisig_xpub_magic, pubnodes),
                 account=f"Multisig {multisig.m} of {len(pubnodes)}",
+                chunkify=bool(msg.chunkify),
             )
         else:
-            account_name = address_n_to_name(coin, address_n, script_type)
-            if account_name is None:
-                account = "Unknown path"
-            elif account_name == "":
-                account = coin.coin_shortcut
-            else:
-                account = f"{coin.coin_shortcut} {account_name}"
+            account = address_n_to_name_or_unknown(coin, address_n, script_type)
             await show_address(
                 address_short,
                 address_qr=address,
                 case_sensitive=address_case_sensitive,
                 path=path,
                 account=account,
+                chunkify=bool(msg.chunkify),
             )
 
     return Address(address=address, mac=mac)

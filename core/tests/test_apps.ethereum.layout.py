@@ -1,14 +1,13 @@
-from common import *
+from common import *  # isort:skip
 
 if not utils.BITCOIN_ONLY:
-    from apps.ethereum import networks
-    from apps.ethereum.layout import format_ethereum_amount
-    from apps.ethereum.tokens import UNKNOWN_TOKEN
-
     from ethereum_common import make_network, make_token
 
-    ETH = networks.by_chain_id(1)
+    from apps.ethereum import networks
+    from apps.ethereum.helpers import format_ethereum_amount
+    from apps.ethereum.tokens import UNKNOWN_TOKEN
 
+    ETH = networks.by_chain_id(1)
 
 @unittest.skipUnless(not utils.BITCOIN_ONLY, "altcoin")
 class TestFormatEthereumAmount(unittest.TestCase):
@@ -49,6 +48,13 @@ class TestFormatEthereumAmount(unittest.TestCase):
         self.assertEqual(text, "100 ETH")
         text = format_ethereum_amount(1000000000000000000000, None, ETH)
         self.assertEqual(text, "1,000 ETH")
+
+    def test_force_units(self):
+        wei_amount = 100_000_000
+        text = format_ethereum_amount(wei_amount, None, ETH)
+        self.assertEqual(text, "100,000,000 Wei ETH")
+        text = format_ethereum_amount(wei_amount, None, ETH, force_unit_gwei=True)
+        self.assertEqual(text, "0.1 Gwei")
 
     def test_precision(self):
         text = format_ethereum_amount(1000000000000000001, None, ETH)

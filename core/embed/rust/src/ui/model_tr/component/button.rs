@@ -1,11 +1,14 @@
 use crate::{
-    strutil::StringType,
+    strutil::TString,
     time::Duration,
     ui::{
         component::{Component, Event, EventCtx, Never},
         constant,
         display::{self, Color, Font, Icon},
+        event::PhysicalButton,
         geometry::{Alignment2D, Offset, Point, Rect},
+        shape,
+        shape::Renderer,
     },
 };
 
@@ -13,29 +16,32 @@ use super::{loader::DEFAULT_DURATION_MS, theme};
 
 const HALF_SCREEN_BUTTON_WIDTH: i16 = constant::WIDTH / 2 - 1;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ButtonPos {
     Left,
     Middle,
     Right,
 }
 
-pub struct Button<T>
-where
-    T: StringType,
-{
+impl From<PhysicalButton> for ButtonPos {
+    fn from(btn: PhysicalButton) -> Self {
+        match btn {
+            PhysicalButton::Left => ButtonPos::Left,
+            PhysicalButton::Right => ButtonPos::Right,
+        }
+    }
+}
+
+pub struct Button {
     bounds: Rect,
     pos: ButtonPos,
-    content: ButtonContent<T>,
+    content: ButtonContent,
     styles: ButtonStyleSheet,
     state: State,
 }
 
-impl<T> Button<T>
-where
-    T: StringType,
-{
-    pub fn new(pos: ButtonPos, content: ButtonContent<T>, styles: ButtonStyleSheet) -> Self {
+impl Button {
+    pub fn new(pos: ButtonPos, content: ButtonContent, styles: ButtonStyleSheet) -> Self {
         Self {
             pos,
             content,
@@ -45,7 +51,7 @@ where
         }
     }
 
-    pub fn from_button_details(pos: ButtonPos, btn_details: ButtonDetails<T>) -> Self {
+    pub fn from_button_details(pos: ButtonPos, btn_details: ButtonDetails) -> Self {
         // Deciding between text and icon
         let style = btn_details.style();
         match btn_details.content {
@@ -54,7 +60,7 @@ where
         }
     }
 
-    pub fn with_text(pos: ButtonPos, text: T, styles: ButtonStyleSheet) -> Self {
+    pub fn with_text(pos: ButtonPos, text: TString<'static>, styles: ButtonStyleSheet) -> Self {
         Self::new(pos, ButtonContent::Text(text), styles)
     }
 
@@ -62,7 +68,7 @@ where
         Self::new(pos, ButtonContent::Icon(image), styles)
     }
 
-    pub fn content(&self) -> &ButtonContent<T> {
+    pub fn content(&self) -> &ButtonContent {
         &self.content
     }
 
@@ -79,13 +85,8 @@ where
     }
 
     /// Changing the text content of the button.
-    pub fn set_text(&mut self, text: T) {
+    pub fn set_text(&mut self, text: TString<'static>) {
         self.content = ButtonContent::Text(text);
-    }
-
-    /// Changing the style of the button.
-    pub fn set_style(&mut self, styles: ButtonStyleSheet) {
-        self.styles = styles;
     }
 
     // Setting the visual state of the button.
@@ -117,7 +118,7 @@ where
         } else {
             match &self.content {
                 ButtonContent::Text(text) => {
-                    let text_width = style.font.visible_text_width(text.as_ref());
+                    let text_width = text.map(|t| style.font.visible_text_width(t));
                     if style.with_outline {
                         text_width + 2 * theme::BUTTON_OUTLINE
                     } else if style.with_arms {
@@ -166,7 +167,7 @@ where
         // Centering the text in case of fixed width.
         if let ButtonContent::Text(text) = &self.content {
             if let Some(fixed_width) = style.fixed_width {
-                let diff = fixed_width - style.font.visible_text_width(text.as_ref());
+                let diff = fixed_width - text.map(|t| style.font.visible_text_width(t));
                 offset_x = diff / 2;
             }
         }
@@ -175,10 +176,7 @@ where
     }
 }
 
-impl<T> Component for Button<T>
-where
-    T: StringType,
-{
+impl Component for Button {
     type Msg = Never;
 
     fn place(&mut self, bounds: Rect) -> Rect {
@@ -227,16 +225,15 @@ where
 
         // Painting the content
         match &self.content {
-            ButtonContent::Text(text) => {
+            ButtonContent::Text(text) => text.map(|t| {
                 display::text_left(
-                    self.get_text_baseline(style)
-                        - Offset::x(style.font.start_x_bearing(text.as_ref())),
-                    text.as_ref(),
+                    self.get_text_baseline(style) - Offset::x(style.font.start_x_bearing(t)),
+                    t,
                     style.font,
                     fg_color,
                     bg_color,
                 );
-            }
+            }),
             ButtonContent::Icon(icon) => {
                 // Allowing for possible offset of the area from current style
                 let icon_area = area.translate(style.offset);
@@ -265,6 +262,88 @@ where
             }
         }
     }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        let style = self.style();
+        let fg_color = style.text_color;
+        let bg_color = fg_color.negate();
+        let area = self.get_current_area();
+        let inversed_colors = bg_color != theme::BG;
+
+        // Filling the background (with 2-pixel rounding when applicable)
+        if inversed_colors {
+            shape::Bar::new(area)
+                .with_radius(3)
+                .with_bg(bg_color)
+                .render(target);
+        } else if style.with_outline {
+            shape::Bar::new(area)
+                .with_radius(3)
+                .with_fg(fg_color)
+                .render(target);
+        } else {
+            shape::Bar::new(area).with_bg(bg_color).render(target);
+        }
+
+        // Optionally display "arms" at both sides of content - always in FG and BG
+        // colors (they are not inverted).
+        if style.with_arms {
+            shape::ToifImage::new(area.left_center(), theme::ICON_ARM_LEFT.toif)
+                .with_align(Alignment2D::TOP_RIGHT)
+                .with_fg(theme::FG)
+                .render(target);
+
+            shape::ToifImage::new(area.right_center(), theme::ICON_ARM_RIGHT.toif)
+                .with_align(Alignment2D::TOP_LEFT)
+                .with_fg(theme::FG)
+                .render(target);
+        }
+
+        // Painting the content
+        match &self.content {
+            ButtonContent::Text(text) => text.map(|t| {
+                shape::Text::new(
+                    self.get_text_baseline(style) - Offset::x(style.font.start_x_bearing(t)),
+                    t,
+                )
+                .with_font(style.font)
+                .with_fg(fg_color)
+                .render(target);
+            }),
+            ButtonContent::Icon(icon) => {
+                // Allowing for possible offset of the area from current style
+                let icon_area = area.translate(style.offset);
+                if style.with_outline {
+                    shape::ToifImage::new(icon_area.center(), icon.toif)
+                        .with_align(Alignment2D::CENTER)
+                        .with_fg(fg_color)
+                        .render(target);
+                } else {
+                    // Positioning the icon in the corresponding corner/center
+                    match self.pos {
+                        ButtonPos::Left => {
+                            shape::ToifImage::new(icon_area.bottom_left(), icon.toif)
+                                .with_align(Alignment2D::BOTTOM_LEFT)
+                                .with_fg(fg_color)
+                                .render(target)
+                        }
+
+                        ButtonPos::Right => {
+                            shape::ToifImage::new(icon_area.bottom_right(), icon.toif)
+                                .with_align(Alignment2D::BOTTOM_RIGHT)
+                                .with_fg(fg_color)
+                                .render(target)
+                        }
+
+                        ButtonPos::Middle => shape::ToifImage::new(icon_area.center(), icon.toif)
+                            .with_align(Alignment2D::CENTER)
+                            .with_fg(fg_color)
+                            .render(target),
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -274,8 +353,8 @@ enum State {
 }
 
 #[derive(Clone)]
-pub enum ButtonContent<T> {
-    Text(T),
+pub enum ButtonContent {
+    Text(TString<'static>),
     Icon(Icon),
 }
 
@@ -295,6 +374,7 @@ pub struct ButtonStyle {
 
 impl ButtonStyleSheet {
     pub fn new(
+        font: Font,
         normal_color: Color,
         active_color: Color,
         with_outline: bool,
@@ -304,7 +384,7 @@ impl ButtonStyleSheet {
     ) -> Self {
         Self {
             normal: ButtonStyle {
-                font: theme::FONT_BUTTON,
+                font,
                 text_color: normal_color,
                 with_outline,
                 with_arms,
@@ -312,7 +392,7 @@ impl ButtonStyleSheet {
                 offset,
             },
             active: ButtonStyle {
-                font: theme::FONT_BUTTON,
+                font,
                 text_color: active_color,
                 with_outline,
                 with_arms,
@@ -324,12 +404,14 @@ impl ButtonStyleSheet {
 
     // White text in normal mode.
     pub fn default(
+        font: Font,
         with_outline: bool,
         with_arms: bool,
         fixed_width: Option<i16>,
         offset: Offset,
     ) -> Self {
         Self::new(
+            font,
             theme::FG,
             theme::BG,
             with_outline,
@@ -342,25 +424,29 @@ impl ButtonStyleSheet {
 
 /// Describing the button on the screen - only visuals.
 #[derive(Clone)]
-pub struct ButtonDetails<T> {
-    pub content: ButtonContent<T>,
+pub struct ButtonDetails {
+    pub content: ButtonContent,
+    font: Font,
     pub duration: Option<Duration>,
     with_outline: bool,
     with_arms: bool,
     fixed_width: Option<i16>,
     offset: Offset,
+    pub send_long_press: bool,
 }
 
-impl<T> ButtonDetails<T> {
+impl ButtonDetails {
     /// Text button.
-    pub fn text(text: T) -> Self {
+    pub fn text(text: TString<'static>) -> Self {
         Self {
             content: ButtonContent::Text(text),
+            font: Font::NORMAL_UPPER,
             duration: None,
             with_outline: true,
             with_arms: false,
             fixed_width: None,
             offset: Offset::zero(),
+            send_long_press: false,
         }
     }
 
@@ -368,16 +454,28 @@ impl<T> ButtonDetails<T> {
     pub fn icon(icon: Icon) -> Self {
         Self {
             content: ButtonContent::Icon(icon),
+            font: Font::NORMAL_UPPER,
             duration: None,
             with_outline: false,
             with_arms: false,
             fixed_width: None,
             offset: Offset::zero(),
+            send_long_press: false,
         }
     }
 
+    /// Resolves text and finds possible icon names.
+    pub fn from_text_possible_icon(text: TString<'static>) -> Self {
+        text.map(|t| match t {
+            "" => Self::cancel_icon(),
+            "<" => Self::left_arrow_icon(),
+            "^" => Self::up_arrow_icon(),
+            _ => Self::text(text),
+        })
+    }
+
     /// Text with arms signalling double press.
-    pub fn armed_text(text: T) -> Self {
+    pub fn armed_text(text: TString<'static>) -> Self {
         Self::text(text).with_arms()
     }
 
@@ -399,7 +497,7 @@ impl<T> ButtonDetails<T> {
     /// Up arrow to signal paginating back. No outline. Offsetted little right
     /// to not be on the boundary.
     pub fn up_arrow_icon() -> Self {
-        Self::icon(theme::ICON_ARROW_UP).with_offset(Offset::new(2, -3))
+        Self::icon(theme::ICON_ARROW_UP).with_offset(Offset::new(3, -4))
     }
 
     /// Down arrow to signal paginating forward. Takes half the screen's width
@@ -456,9 +554,16 @@ impl<T> ButtonDetails<T> {
         self
     }
 
+    /// Specifying the font of the button.
+    pub fn with_font(mut self, font: Font) -> Self {
+        self.font = font;
+        self
+    }
+
     /// Button style that should be applied.
     pub fn style(&self) -> ButtonStyleSheet {
         ButtonStyleSheet::default(
+            self.font,
             self.with_outline,
             self.with_arms,
             self.fixed_width,
@@ -469,20 +574,17 @@ impl<T> ButtonDetails<T> {
 
 /// Holding the button details for all three possible buttons.
 #[derive(Clone)]
-pub struct ButtonLayout<T> {
-    pub btn_left: Option<ButtonDetails<T>>,
-    pub btn_middle: Option<ButtonDetails<T>>,
-    pub btn_right: Option<ButtonDetails<T>>,
+pub struct ButtonLayout {
+    pub btn_left: Option<ButtonDetails>,
+    pub btn_middle: Option<ButtonDetails>,
+    pub btn_right: Option<ButtonDetails>,
 }
 
-impl<T> ButtonLayout<T>
-where
-    T: StringType,
-{
+impl ButtonLayout {
     pub fn new(
-        btn_left: Option<ButtonDetails<T>>,
-        btn_middle: Option<ButtonDetails<T>>,
-        btn_right: Option<ButtonDetails<T>>,
+        btn_left: Option<ButtonDetails>,
+        btn_middle: Option<ButtonDetails>,
+        btn_right: Option<ButtonDetails>,
     ) -> Self {
         Self {
             btn_left,
@@ -497,13 +599,8 @@ where
         Self::new(None, None, None)
     }
 
-    /// Default button layout for all three buttons - icons.
-    pub fn default_three_icons() -> Self {
-        Self::arrow_armed_arrow("SELECT".into())
-    }
-
-    /// Special middle text for default icon layout.
-    pub fn arrow_armed_arrow(text: T) -> Self {
+    /// Arrows at sides, armed text in the middle.
+    pub fn arrow_armed_arrow(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::left_arrow_icon()),
             Some(ButtonDetails::armed_text(text)),
@@ -512,7 +609,7 @@ where
     }
 
     /// Left cancel, armed text and next right arrow.
-    pub fn cancel_armed_arrow(text: T) -> Self {
+    pub fn cancel_armed_arrow(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::cancel_icon()),
             Some(ButtonDetails::armed_text(text)),
@@ -521,7 +618,7 @@ where
     }
 
     /// Middle armed text and next right arrow.
-    pub fn none_armed_arrow(text: T) -> Self {
+    pub fn none_armed_arrow(text: TString<'static>) -> Self {
         Self::new(
             None,
             Some(ButtonDetails::armed_text(text)),
@@ -529,17 +626,34 @@ where
         )
     }
 
+    /// Left text, armed text and right info icon/text.
+    pub fn text_armed_info(left: TString<'static>, middle: TString<'static>) -> Self {
+        Self::new(
+            Some(ButtonDetails::from_text_possible_icon(left)),
+            Some(ButtonDetails::armed_text(middle)),
+            Some(
+                ButtonDetails::text("i".into())
+                    .with_fixed_width(theme::BUTTON_ICON_WIDTH)
+                    .with_font(Font::NORMAL),
+            ),
+        )
+    }
+
     /// Left cancel, armed text and right info icon/text.
-    pub fn cancel_armed_info(middle: T) -> Self {
+    pub fn cancel_armed_info(middle: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::cancel_icon()),
             Some(ButtonDetails::armed_text(middle)),
-            Some(ButtonDetails::text("i".into()).with_fixed_width(theme::BUTTON_ICON_WIDTH)),
+            Some(
+                ButtonDetails::text("i".into())
+                    .with_fixed_width(theme::BUTTON_ICON_WIDTH)
+                    .with_font(Font::NORMAL),
+            ),
         )
     }
 
     /// Left cancel, armed text and blank on right.
-    pub fn cancel_armed_none(middle: T) -> Self {
+    pub fn cancel_armed_none(middle: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::cancel_icon()),
             Some(ButtonDetails::armed_text(middle)),
@@ -548,7 +662,7 @@ where
     }
 
     /// Left back arrow and middle armed text.
-    pub fn arrow_armed_none(text: T) -> Self {
+    pub fn arrow_armed_none(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::left_arrow_icon()),
             Some(ButtonDetails::armed_text(text)),
@@ -557,35 +671,39 @@ where
     }
 
     /// Left and right texts.
-    pub fn text_none_text(left: T, right: T) -> Self {
+    pub fn text_none_text(left: TString<'static>, right: TString<'static>) -> Self {
         Self::new(
-            Some(ButtonDetails::text(left)),
+            Some(ButtonDetails::from_text_possible_icon(left)),
             None,
-            Some(ButtonDetails::text(right)),
+            Some(ButtonDetails::from_text_possible_icon(right)),
         )
     }
 
     /// Left text and right arrow.
-    pub fn text_none_arrow(text: T) -> Self {
+    pub fn text_none_arrow(text: TString<'static>) -> Self {
         Self::new(
-            Some(ButtonDetails::text(text)),
+            Some(ButtonDetails::from_text_possible_icon(text)),
             None,
             Some(ButtonDetails::right_arrow_icon()),
         )
     }
 
     /// Left text and WIDE right arrow.
-    pub fn text_none_arrow_wide(text: T) -> Self {
+    pub fn text_none_arrow_wide(text: TString<'static>) -> Self {
         Self::new(
-            Some(ButtonDetails::text(text)),
+            Some(ButtonDetails::from_text_possible_icon(text)),
             None,
             Some(ButtonDetails::down_arrow_icon_wide()),
         )
     }
 
     /// Only right text.
-    pub fn none_none_text(text: T) -> Self {
-        Self::new(None, None, Some(ButtonDetails::text(text)))
+    pub fn none_none_text(text: TString<'static>) -> Self {
+        Self::new(
+            None,
+            None,
+            Some(ButtonDetails::from_text_possible_icon(text)),
+        )
     }
 
     /// Left and right arrow icons for navigation.
@@ -598,20 +716,20 @@ where
     }
 
     /// Left arrow and right text.
-    pub fn arrow_none_text(text: T) -> Self {
+    pub fn arrow_none_text(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::left_arrow_icon()),
             None,
-            Some(ButtonDetails::text(text)),
+            Some(ButtonDetails::from_text_possible_icon(text)),
         )
     }
 
     /// Up arrow left and right text.
-    pub fn up_arrow_none_text(text: T) -> Self {
+    pub fn up_arrow_none_text(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::up_arrow_icon()),
             None,
-            Some(ButtonDetails::text(text)),
+            Some(ButtonDetails::from_text_possible_icon(text)),
         )
     }
 
@@ -633,12 +751,25 @@ where
         )
     }
 
-    /// Cancel cross on left and right arrow facing down.
+    /// Up arrow on left and right arrow facing down.
     pub fn up_arrow_none_arrow_wide() -> Self {
         Self::new(
             Some(ButtonDetails::up_arrow_icon()),
             None,
             Some(ButtonDetails::down_arrow_icon_wide()),
+        )
+    }
+
+    /// Up arrow on left, middle text and info on the right.
+    pub fn up_arrow_armed_info(text: TString<'static>) -> Self {
+        Self::new(
+            Some(ButtonDetails::up_arrow_icon()),
+            Some(ButtonDetails::armed_text(text)),
+            Some(
+                ButtonDetails::text("i".into())
+                    .with_fixed_width(theme::BUTTON_ICON_WIDTH)
+                    .with_font(Font::NORMAL),
+            ),
         )
     }
 
@@ -652,16 +783,16 @@ where
     }
 
     /// Cancel cross on left and text on the right.
-    pub fn cancel_none_text(text: T) -> Self {
+    pub fn cancel_none_text(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::cancel_icon()),
             None,
-            Some(ButtonDetails::text(text)),
+            Some(ButtonDetails::from_text_possible_icon(text)),
         )
     }
 
     /// Cancel cross on left and hold-to-confirm text on the right.
-    pub fn cancel_none_htc(text: T) -> Self {
+    pub fn cancel_none_htc(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::cancel_icon()),
             None,
@@ -670,7 +801,7 @@ where
     }
 
     /// Arrow back on left and hold-to-confirm text on the right.
-    pub fn arrow_none_htc(text: T) -> Self {
+    pub fn arrow_none_htc(text: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::left_arrow_icon()),
             None,
@@ -679,12 +810,12 @@ where
     }
 
     /// Only armed text in the middle.
-    pub fn none_armed_none(text: T) -> Self {
+    pub fn none_armed_none(text: TString<'static>) -> Self {
         Self::new(None, Some(ButtonDetails::armed_text(text)), None)
     }
 
     /// HTC on both sides.
-    pub fn htc_none_htc(left: T, right: T) -> Self {
+    pub fn htc_none_htc(left: TString<'static>, right: TString<'static>) -> Self {
         Self::new(
             Some(ButtonDetails::text(left).with_default_duration()),
             None,
@@ -897,53 +1028,34 @@ impl ButtonActions {
 // DEBUG-ONLY SECTION BELOW
 
 #[cfg(feature = "ui_debug")]
-use crate::strutil::ShortString;
-
-#[cfg(feature = "ui_debug")]
-impl<T: StringType> crate::trace::Trace for Button<T> {
+impl crate::trace::Trace for Button {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("Button");
-        match &self.content {
-            ButtonContent::Text(text) => t.string("text", text.as_ref()),
+        match self.content {
+            ButtonContent::Text(text) => t.string("text", text),
             ButtonContent::Icon(icon) => {
                 t.null("text");
-                t.string("icon", icon.name);
+                t.string("icon", icon.name.into());
             }
         }
     }
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T: StringType> crate::trace::Trace for ButtonDetails<T> {
+impl crate::trace::Trace for ButtonDetails {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("ButtonDetails");
-        match &self.content {
+        match self.content {
             ButtonContent::Text(text) => {
-                t.string("text", text.as_ref());
+                t.string("text", text);
             }
             ButtonContent::Icon(icon) => {
                 t.null("text");
-                t.string("icon", icon.name);
+                t.string("icon", icon.name.into());
             }
         }
         if let Some(duration) = &self.duration {
             t.int("hold_to_confirm", duration.to_millis() as i64);
-        }
-    }
-}
-
-#[cfg(feature = "ui_debug")]
-impl ButtonAction {
-    /// Describing the action as a string. Debug-only.
-    pub fn string(&self) -> ShortString {
-        match self {
-            ButtonAction::NextPage => "Next".into(),
-            ButtonAction::PrevPage => "Prev".into(),
-            ButtonAction::FirstPage => "First".into(),
-            ButtonAction::LastPage => "Last".into(),
-            ButtonAction::Cancel => "Cancel".into(),
-            ButtonAction::Confirm => "Confirm".into(),
-            ButtonAction::Info => "Info".into(),
         }
     }
 }

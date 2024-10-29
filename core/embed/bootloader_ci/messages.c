@@ -200,8 +200,9 @@ static void _usb_webusb_read_retry(uint8_t iface_num, uint8_t *buf) {
         // only timeout => let's try again
       } else {
         // error
-        error_shutdown("USB ERROR",
-                       "Error reading from USB. Try different USB cable.");
+        error_shutdown_ex("USB ERROR",
+                          "Error reading from USB. Try different USB cable.",
+                          NULL);
       }
     }
     return;  // success
@@ -402,8 +403,6 @@ static bool _read_payload(pb_istream_t *stream, const pb_field_t *field,
   return true;
 }
 
-secbool check_vendor_header_keys(const vendor_header *const vhdr);
-
 static int version_compare(uint32_t vera, uint32_t verb) {
   int a, b;
   a = vera & 0xFF;
@@ -503,7 +502,7 @@ int process_msg_FirmwareUpload(uint8_t iface_num, uint32_t msg_size,
           read_image_header(chunk_buffer + vhdr.hdrlen, FIRMWARE_IMAGE_MAGIC,
                             FIRMWARE_IMAGE_MAXSIZE);
 
-      if (received_hdr != (const image_header *)chunk_buffer + vhdr.hdrlen) {
+      if (received_hdr != (const image_header *)(chunk_buffer + vhdr.hdrlen)) {
         MSG_SEND_INIT(Failure);
         MSG_SEND_ASSIGN_VALUE(code, FailureType_Failure_ProcessError);
         MSG_SEND_ASSIGN_STRING(message, "Invalid firmware header");
@@ -617,11 +616,12 @@ int process_msg_FirmwareUpload(uint8_t iface_num, uint32_t msg_size,
 
   const uint32_t *const src = (const uint32_t *const)chunk_buffer;
 
-  for (int i = 0; i < chunk_size / (sizeof(uint32_t) * 4); i++) {
-    ensure(flash_area_write_quadword(
+  ensure((chunk_size % FLASH_BLOCK_SIZE == 0) * sectrue, NULL);
+  for (int i = 0; i < chunk_size / FLASH_BLOCK_SIZE; i++) {
+    ensure(flash_area_write_block(
                &FIRMWARE_AREA,
-               firmware_block * IMAGE_CHUNK_SIZE + i * 4 * sizeof(uint32_t),
-               &src[4 * i]),
+               firmware_block * IMAGE_CHUNK_SIZE + i * FLASH_BLOCK_SIZE,
+               &src[FLASH_BLOCK_WORDS * i]),
            NULL);
   }
 

@@ -39,11 +39,14 @@
 #define FLASH_SECTOR_COUNT 24
 #elif defined TREZOR_MODEL_1
 #define FLASH_SECTOR_COUNT 12
+#elif defined TREZOR_MODEL_T3T1
+#define FLASH_SECTOR_COUNT 256
 #else
 #error Unknown MCU
 #endif
 
-static const uint32_t FLASH_SECTOR_TABLE[FLASH_SECTOR_COUNT + 1] = {
+static uint32_t FLASH_SECTOR_TABLE[FLASH_SECTOR_COUNT + 1] = {
+#if defined TREZOR_MODEL_T || defined TREZOR_MODEL_R
     [0] = 0x08000000,   // - 0x08003FFF |  16 KiB
     [1] = 0x08004000,   // - 0x08007FFF |  16 KiB
     [2] = 0x08008000,   // - 0x0800BFFF |  16 KiB
@@ -56,7 +59,6 @@ static const uint32_t FLASH_SECTOR_TABLE[FLASH_SECTOR_COUNT + 1] = {
     [9] = 0x080A0000,   // - 0x080BFFFF | 128 KiB
     [10] = 0x080C0000,  // - 0x080DFFFF | 128 KiB
     [11] = 0x080E0000,  // - 0x080FFFFF | 128 KiB
-#if defined TREZOR_MODEL_T || defined TREZOR_MODEL_R
     [12] = 0x08100000,  // - 0x08103FFF |  16 KiB
     [13] = 0x08104000,  // - 0x08107FFF |  16 KiB
     [14] = 0x08108000,  // - 0x0810BFFF |  16 KiB
@@ -71,7 +73,22 @@ static const uint32_t FLASH_SECTOR_TABLE[FLASH_SECTOR_COUNT + 1] = {
     [23] = 0x081E0000,  // - 0x081FFFFF | 128 KiB
     [24] = 0x08200000,  // last element - not a valid sector
 #elif defined TREZOR_MODEL_1
+    [0] = 0x08000000,   // - 0x08003FFF |  16 KiB
+    [1] = 0x08004000,   // - 0x08007FFF |  16 KiB
+    [2] = 0x08008000,   // - 0x0800BFFF |  16 KiB
+    [3] = 0x0800C000,   // - 0x0800FFFF |  16 KiB
+    [4] = 0x08010000,   // - 0x0801FFFF |  64 KiB
+    [5] = 0x08020000,   // - 0x0803FFFF | 128 KiB
+    [6] = 0x08040000,   // - 0x0805FFFF | 128 KiB
+    [7] = 0x08060000,   // - 0x0807FFFF | 128 KiB
+    [8] = 0x08080000,   // - 0x0809FFFF | 128 KiB
+    [9] = 0x080A0000,   // - 0x080BFFFF | 128 KiB
+    [10] = 0x080C0000,  // - 0x080DFFFF | 128 KiB
+    [11] = 0x080E0000,  // - 0x080FFFFF | 128 KiB
     [12] = 0x08100000,  // last element - not a valid sector
+#elif defined TREZOR_MODEL_T3T1
+    [0] = 0x08000000,  // - 0x08001FFF |   8 KiB
+                       // rest is initialized in flash_init
 #else
 #error Unknown Trezor model
 #endif
@@ -80,11 +97,6 @@ static const uint32_t FLASH_SECTOR_TABLE[FLASH_SECTOR_COUNT + 1] = {
 static uint8_t *FLASH_BUFFER = NULL;
 static uint32_t FLASH_SIZE;
 
-#define OTP_BLOCK_SIZE 32
-#define FLASH_SECTOR_OTP (FLASH_SECTOR_COUNT)
-
-static uint8_t OTP_BUFFER[OTP_BLOCK_SIZE * 64];
-
 static void flash_exit(void) {
   int r = munmap(FLASH_BUFFER, FLASH_SIZE);
   ensure(sectrue * (r == 0), "munmap failed");
@@ -92,6 +104,13 @@ static void flash_exit(void) {
 
 void flash_init(void) {
   if (FLASH_BUFFER) return;
+
+#if defined TREZOR_MODEL_T3T1
+  for (size_t i = 0; i < FLASH_SECTOR_COUNT; i++) {
+    FLASH_SECTOR_TABLE[i + 1] =
+        FLASH_SECTOR_TABLE[i] + 0x2000;  // 8KiB size sectors
+  }
+#endif
 
   FLASH_SIZE = FLASH_SECTOR_TABLE[FLASH_SECTOR_COUNT] - FLASH_SECTOR_TABLE[0];
 
@@ -123,9 +142,6 @@ void flash_init(void) {
 
   FLASH_BUFFER = (uint8_t *)map;
 
-  // fill OTP buffer with ones
-  memset(OTP_BUFFER, 0xFF, sizeof(OTP_BUFFER));
-
   atexit(flash_exit);
 }
 
@@ -145,48 +161,43 @@ const void *flash_get_address(uint16_t sector, uint32_t offset, uint32_t size) {
   return FLASH_BUFFER + addr - FLASH_SECTOR_TABLE[0];
 }
 
-uint32_t flash_sector_size(uint16_t sector) {
-  if (sector >= FLASH_SECTOR_COUNT) {
+uint32_t flash_sector_size(uint16_t first_sector, uint16_t sector_count) {
+  if (first_sector + sector_count > FLASH_SECTOR_COUNT) {
     return 0;
   }
-  return FLASH_SECTOR_TABLE[sector + 1] - FLASH_SECTOR_TABLE[sector];
+  return FLASH_SECTOR_TABLE[first_sector + sector_count] -
+         FLASH_SECTOR_TABLE[first_sector];
 }
 
-secbool flash_area_erase_bulk(const flash_area_t *area, int count,
-                              void (*progress)(int pos, int len)) {
-  ensure(flash_unlock_write(), NULL);
+uint16_t flash_sector_find(uint16_t first_sector, uint32_t offset) {
+  uint16_t sector = first_sector;
 
-  int total_sectors = 0;
-  int done_sectors = 0;
-  for (int a = 0; a < count; a++) {
-    for (int i = 0; i < area[a].num_subareas; i++) {
-      total_sectors += area[a].subarea[i].num_sectors;
+  while (sector < FLASH_SECTOR_COUNT) {
+    uint32_t sector_size =
+        FLASH_SECTOR_TABLE[sector + 1] - FLASH_SECTOR_TABLE[sector];
+
+    if (offset < sector_size) {
+      break;
     }
+    offset -= sector_size;
+    sector++;
   }
 
-  if (progress) {
-    progress(0, total_sectors);
+  return sector;
+}
+
+secbool flash_sector_erase(uint16_t sector) {
+  if (sector >= FLASH_SECTOR_COUNT) {
+    return secfalse;
   }
 
-  for (int a = 0; a < count; a++) {
-    for (int s = 0; s < area[a].num_subareas; s++) {
-      for (int i = 0; i < area[a].subarea[s].num_sectors; i++) {
-        int sector = area[a].subarea[s].first_sector + i;
+  const uint32_t offset = FLASH_SECTOR_TABLE[sector] - FLASH_SECTOR_TABLE[0];
 
-        const uint32_t offset =
-            FLASH_SECTOR_TABLE[sector] - FLASH_SECTOR_TABLE[0];
-        const uint32_t size =
-            FLASH_SECTOR_TABLE[sector + 1] - FLASH_SECTOR_TABLE[sector];
-        memset(FLASH_BUFFER + offset, 0xFF, size);
+  const uint32_t size =
+      FLASH_SECTOR_TABLE[sector + 1] - FLASH_SECTOR_TABLE[sector];
 
-        done_sectors++;
-        if (progress) {
-          progress(done_sectors, total_sectors);
-        }
-      }
-    }
-  }
-  ensure(flash_lock_write(), NULL);
+  memset(FLASH_BUFFER + offset, 0xFF, size);
+
   return sectrue;
 }
 
@@ -217,32 +228,17 @@ secbool flash_write_word(uint16_t sector, uint32_t offset, uint32_t data) {
   return sectrue;
 }
 
-secbool flash_otp_read(uint8_t block, uint8_t offset, uint8_t *data,
-                       uint8_t datalen) {
-  if (offset + datalen > OTP_BLOCK_SIZE) {
+secbool flash_write_block(uint16_t sector, uint32_t offset,
+                          const flash_block_t block) {
+  if (offset % (sizeof(uint32_t) *
+                FLASH_BLOCK_WORDS)) {  // we write only at block boundary
     return secfalse;
   }
-  uint32_t offset_in_sector = block * OTP_BLOCK_SIZE + offset;
-  memcpy(data, OTP_BUFFER + offset_in_sector, datalen);
-  return sectrue;
-}
 
-secbool flash_otp_write(uint8_t block, uint8_t offset, const uint8_t *data,
-                        uint8_t datalen) {
-  if (offset + datalen > OTP_BLOCK_SIZE) {
-    return secfalse;
-  }
-  uint32_t offset_in_sector = block * OTP_BLOCK_SIZE + offset;
-  uint8_t *flash = OTP_BUFFER + offset_in_sector;
-  for (int i = 0; i < datalen; i++) {
-    if ((flash[i] & data[i]) != data[i]) {
-      return secfalse;  // we cannot change zeroes to ones
+  for (int i = 0; i < FLASH_BLOCK_WORDS; i++) {
+    if (!flash_write_word(sector, offset + i * sizeof(uint32_t), block[i])) {
+      return secfalse;
     }
-    flash[i] = data[i];
   }
   return sectrue;
 }
-
-secbool flash_otp_lock(uint8_t block) { return secfalse; }
-
-secbool flash_otp_is_locked(uint8_t block) { return secfalse; }

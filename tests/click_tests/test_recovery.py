@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Generator
 
 import pytest
 
-from trezorlib import device, messages
+from trezorlib import device, messages, models
 
 from ..common import MNEMONIC12, MNEMONIC_SLIP39_BASIC_20_3of6
 from . import recovery
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from ..device_handler import BackgroundDeviceHandler
 
 
-pytestmark = [pytest.mark.skip_t1]
+pytestmark = [pytest.mark.skip_t1b1]
 
 
 @contextmanager
@@ -47,13 +47,15 @@ def prepare_recovery_and_evaluate(
     assert isinstance(device_handler.result(), messages.Success)
     features = device_handler.features()
     assert features.initialized is True
-    assert features.recovery_mode is False
+    assert features.recovery_status == messages.RecoveryStatus.Nothing
 
 
 @pytest.mark.setup_client(uninitialized=True)
 def test_recovery_slip39_basic(device_handler: "BackgroundDeviceHandler"):
     with prepare_recovery_and_evaluate(device_handler) as debug:
         recovery.confirm_recovery(debug)
+        if debug.model is models.T2B1:
+            recovery.confirm_recovery(debug)
 
         recovery.select_number_of_words(debug)
         recovery.enter_shares(debug, MNEMONIC_SLIP39_BASIC_20_3of6)
@@ -64,7 +66,23 @@ def test_recovery_slip39_basic(device_handler: "BackgroundDeviceHandler"):
 def test_recovery_bip39(device_handler: "BackgroundDeviceHandler"):
     with prepare_recovery_and_evaluate(device_handler) as debug:
         recovery.confirm_recovery(debug)
+        if debug.model is models.T2B1:
+            recovery.confirm_recovery(debug)
 
         recovery.select_number_of_words(debug, num_of_words=12)
         recovery.enter_seed(debug, MNEMONIC12.split())
+        recovery.finalize(debug)
+
+
+@pytest.mark.setup_client(uninitialized=True)
+def test_recovery_bip39_previous_word(device_handler: "BackgroundDeviceHandler"):
+    with prepare_recovery_and_evaluate(device_handler) as debug:
+        recovery.confirm_recovery(debug)
+        if debug.model is models.T2B1:
+            recovery.confirm_recovery(debug)
+
+        recovery.select_number_of_words(debug, num_of_words=12)
+        seed_words: list[str] = MNEMONIC12.split()
+        bad_indexes = {1: seed_words[-1], 7: seed_words[0]}
+        recovery.enter_seed_previous_correct(debug, seed_words, bad_indexes)
         recovery.finalize(debug)

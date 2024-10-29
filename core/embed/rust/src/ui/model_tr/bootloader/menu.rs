@@ -1,25 +1,30 @@
 #[cfg(feature = "ui_debug")]
 use crate::trace::{Trace, Tracer};
-use crate::ui::{
-    component::{Child, Component, Event, EventCtx, Pad},
-    constant::screen,
-    display,
-    display::{Font, Icon},
-    geometry::{Alignment2D, Offset, Point, Rect},
+use crate::{
+    trezorhal::secbool::{secbool, sectrue},
+    ui::{
+        component::{Child, Component, Event, EventCtx, Pad},
+        constant::screen,
+        display,
+        display::{Font, Icon},
+        geometry::{Alignment, Alignment2D, Offset, Point, Rect},
+        layout::simplified::ReturnToC,
+        shape,
+        shape::Renderer,
+    },
 };
 
-use super::{
-    super::component::{Choice, ChoiceFactory, ChoicePage},
-    theme::{BLD_BG, BLD_FG, ICON_EXIT, ICON_REDO, ICON_TRASH},
-    ReturnToC,
+use super::super::{
+    component::{ButtonLayout, Choice, ChoiceFactory, ChoicePage},
+    theme::bootloader::{BLD_BG, BLD_FG, ICON_EXIT, ICON_REDO, ICON_TRASH},
 };
 
 #[repr(u32)]
 #[derive(Copy, Clone)]
 pub enum MenuMsg {
-    Close = 1,
-    Reboot = 2,
-    FactoryReset = 3,
+    Close = 0xAABBCCDD,
+    Reboot = 0x11223344,
+    FactoryReset = 0x55667788,
 }
 impl ReturnToC for MenuMsg {
     fn return_to_c(self) -> u32 {
@@ -46,7 +51,7 @@ impl MenuChoice {
     }
 }
 
-impl Choice<&'static str> for MenuChoice {
+impl Choice for MenuChoice {
     fn paint_center(&self, _area: Rect, _inverse: bool) {
         // Icon on top and two lines of text below
         self.icon.draw(
@@ -65,6 +70,30 @@ impl Choice<&'static str> for MenuChoice {
             BLD_BG,
         );
     }
+
+    fn render_center<'s>(&self, target: &mut impl Renderer<'s>, _area: Rect, _inverse: bool) {
+        // Icon on top and two lines of text below
+        shape::ToifImage::new(SCREEN_CENTER + Offset::y(-20), self.icon.toif)
+            .with_align(Alignment2D::CENTER)
+            .with_fg(BLD_FG)
+            .render(target);
+
+        shape::Text::new(SCREEN_CENTER, self.first_line)
+            .with_align(Alignment::Center)
+            .with_font(Font::NORMAL)
+            .with_fg(BLD_FG)
+            .render(target);
+
+        shape::Text::new(SCREEN_CENTER + Offset::y(10), self.second_line)
+            .with_align(Alignment::Center)
+            .with_font(Font::NORMAL)
+            .with_fg(BLD_FG)
+            .render(target);
+    }
+
+    fn btn_layout(&self) -> ButtonLayout {
+        ButtonLayout::arrow_armed_arrow("SELECT".into())
+    }
 }
 
 #[cfg(feature = "ui_debug")]
@@ -74,26 +103,32 @@ impl Trace for MenuChoice {
     }
 }
 
-pub struct MenuChoiceFactory;
+pub struct MenuChoiceFactory {
+    firmware_present: secbool,
+}
 
 impl MenuChoiceFactory {
     const CHOICES: [(&'static str, &'static str, Icon); CHOICE_LENGTH] = [
         ("Factory", "reset", ICON_TRASH),
-        ("Reboot", "Trezor", ICON_REDO),
         ("Exit", "menu", ICON_EXIT),
+        ("Reboot", "Trezor", ICON_REDO),
     ];
 
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(firmware_present: secbool) -> Self {
+        Self { firmware_present }
     }
 }
 
-impl ChoiceFactory<&'static str> for MenuChoiceFactory {
+impl ChoiceFactory for MenuChoiceFactory {
     type Action = MenuMsg;
     type Item = MenuChoice;
 
     fn count(&self) -> usize {
-        CHOICE_LENGTH
+        if self.firmware_present == sectrue {
+            CHOICE_LENGTH
+        } else {
+            CHOICE_LENGTH - 1
+        }
     }
 
     fn get(&self, choice_index: usize) -> (Self::Item, Self::Action) {
@@ -104,8 +139,8 @@ impl ChoiceFactory<&'static str> for MenuChoiceFactory {
         );
         let action = match choice_index {
             0 => MenuMsg::FactoryReset,
-            1 => MenuMsg::Reboot,
-            2 => MenuMsg::Close,
+            1 => MenuMsg::Close,
+            2 if self.firmware_present == sectrue => MenuMsg::Reboot,
             _ => unreachable!(),
         };
         (choice_item, action)
@@ -114,12 +149,12 @@ impl ChoiceFactory<&'static str> for MenuChoiceFactory {
 
 pub struct Menu {
     pad: Pad,
-    choice_page: Child<ChoicePage<MenuChoiceFactory, &'static str, MenuMsg>>,
+    choice_page: Child<ChoicePage<MenuChoiceFactory, MenuMsg>>,
 }
 
 impl Menu {
-    pub fn new() -> Self {
-        let choices = MenuChoiceFactory::new();
+    pub fn new(firmware_present: secbool) -> Self {
+        let choices = MenuChoiceFactory::new(firmware_present);
         Self {
             pad: Pad::with_background(BLD_BG).with_clear(),
             choice_page: Child::new(
@@ -141,12 +176,17 @@ impl Component for Menu {
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
-        self.choice_page.event(ctx, event)
+        self.choice_page.event(ctx, event).map(|evt| evt.0)
     }
 
     fn paint(&mut self) {
         self.pad.paint();
         self.choice_page.paint();
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.pad.render(target);
+        self.choice_page.render(target);
     }
 
     #[cfg(feature = "ui_bounds")]

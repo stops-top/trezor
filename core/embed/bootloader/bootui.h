@@ -31,20 +31,33 @@ typedef enum {
   SCREEN_WIPE_CONFIRM = 2,
   SCREEN_FINGER_PRINT = 3,
   SCREEN_WAIT_FOR_HOST = 4,
+  SCREEN_WELCOME = 5,
 } screen_t;
 
+// Displays a warning screeen before jumping to the untrusted firmware
+//
+// Shows vendor image, vendor string and firmware version
+// and optional message to the user (see `wait` argument)
+//
+// `wait` argument specifies a message to the user
+//   0 do not show any message
+//   > 0 show a message like "starting in %d s"
+//   < 0 show a message like "press button to continue"
 void ui_screen_boot(const vendor_header* const vhdr,
-                    const image_header* const hdr);
-void ui_screen_boot_wait(int wait_seconds);
-void ui_screen_boot_click(void);
+                    const image_header* const hdr, int wait);
+
+// Waits until the user confirms the untrusted firmware
+//
+// Implementation is device specific - it wait's until
+// the user presses a button, touches the display
 void ui_click(void);
 
 void ui_screen_welcome(void);
 
 uint32_t ui_screen_intro(const vendor_header* const vhdr,
-                         const image_header* const hdr);
+                         const image_header* const hdr, bool fw_ok);
 
-uint32_t ui_screen_menu(void);
+uint32_t ui_screen_menu(secbool firmware_present);
 
 uint32_t ui_screen_install_confirm(const vendor_header* const vhdr,
                                    const image_header* const hdr,
@@ -61,13 +74,12 @@ void ui_screen_wipe_progress(int pos, int len);
 void ui_screen_done(uint8_t restart_seconds, secbool full_redraw);
 
 void ui_screen_fail(void);
-void ui_screen_install_restricted(void);
 
 void ui_fadein(void);
 void ui_fadeout(void);
 void ui_set_initial_setup(bool initial);
 
-void ui_screen_boot_empty(bool fading);
+void ui_screen_boot_stage_1(bool fading);
 
 #ifdef USE_OPTIGA
 uint32_t ui_screen_unlock_bootloader_confirm(void);

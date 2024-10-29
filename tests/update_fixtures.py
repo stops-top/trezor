@@ -8,7 +8,6 @@ from typing import Iterable
 
 import click
 
-from gitlab import UI_JOB_NAMES, get_branch_ui_fixtures_results, get_jobs_of_interest
 from ui_tests import update_fixtures
 from ui_tests.common import FIXTURES_FILE, get_current_fixtures
 
@@ -36,25 +35,34 @@ def _get_current_git_branch() -> str:
 
 
 @cli.command()
+@click.option(
+    "-g",
+    "--github",
+    is_flag=True,
+    help="Fetch from GitHub Actions instead of GitLab CI",
+)
 @click.option("-b", "--branch", help="Branch name")
+@click.option("-r", "--run-id", help="GitHub Actions run id", type=int)
 @click.option(
     "-o",
     "--only-jobs",
-    type=click.Choice(UI_JOB_NAMES),
     help="Job names which to process",
     multiple=True,
 )
 @click.option(
     "-e",
     "--exclude-jobs",
-    type=click.Choice(UI_JOB_NAMES),
     help="Not take these jobs",
     multiple=True,
 )
+@click.option("-r", "--remove-missing", is_flag=True, help="Remove missing tests")
 def ci(
+    github: bool,
     branch: str | None,
+    run_id: int | None,
     only_jobs: Iterable[str] | None,
     exclude_jobs: Iterable[str] | None,
+    remove_missing: bool,
 ) -> None:
     """Update fixtures file with results from CI."""
     print("Updating from CI...")
@@ -71,8 +79,17 @@ def ci(
     if exclude_jobs:
         print(f"Exclude jobs: {exclude_jobs}")
 
-    jobs_of_interest = get_jobs_of_interest(only_jobs, exclude_jobs)
-    ui_results = get_branch_ui_fixtures_results(branch, jobs_of_interest)
+    if github:
+        from github import get_branch_ui_fixtures_results
+
+        ui_results = get_branch_ui_fixtures_results(
+            branch, only_jobs, exclude_jobs, run_id
+        )
+    else:
+        from gitlab import get_branch_ui_fixtures_results, get_jobs_of_interest
+
+        jobs_of_interest = get_jobs_of_interest(only_jobs, exclude_jobs)
+        ui_results = get_branch_ui_fixtures_results(branch, jobs_of_interest)
 
     current_fixtures = get_current_fixtures()
 
@@ -84,10 +101,23 @@ def ci(
             is_error = True
             print("No results found.")
             continue
+        _model, lang, _job = job_name.split("-")
         model = next(iter(ui_res_dict.keys()))
+        assert model == _model
         group = next(iter(ui_res_dict[model].keys()))
         current_model = current_fixtures.setdefault(model, {})
         current_group = current_model.setdefault(group, {})  # type: ignore
+
+        if remove_missing:
+            # get rid of tests that were not run in CI
+            removed = 0
+            for key in list(current_group.keys()):
+                if not key.startswith(f"{model}_{lang}_"):
+                    continue
+                if key not in ui_res_dict[model][group]:
+                    current_group.pop(key)
+                    removed += 1
+            print(f"Removed {removed} tests.")
 
         differing = 0
         for test_name, res in ui_res_dict[model][group].items():

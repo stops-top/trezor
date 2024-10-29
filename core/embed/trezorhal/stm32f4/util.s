@@ -43,7 +43,7 @@ jump_to_with_flag:
   // wipe memory at the end of the current stage of code
   bl clear_otg_hs_memory
   ldr r0, =ccmram_start // r0 - point to beginning of CCMRAM
-  ldr r1, =ccmram_end   // r1 - point to byte after the end of CCMRAM
+  ldr r1, =boot_args_start // r1 - point to byte after the end of CCMRAM
   ldr r2, =0            // r2 - the word-sized value to be written
   bl memset_reg
   ldr r0, =sram_start   // r0 - point to beginning of SRAM
@@ -166,5 +166,17 @@ shutdown_privileged:
   msr control, r0 // jump to unprivileged mode
   ldr r0, =0
   b . // loop forever
+
+  .global MemManage_Handler
+  .type MemManage_Handler, STT_FUNC
+MemManage_Handler:
+  ldr r2, =_sstack
+  mrs r1, msp
+  ldr r0, =_estack
+  msr msp, r0
+  cmp r1, r2
+  IT lt
+  bllt MemManage_Handler_SO
+  bl MemManage_Handler_MM
 
   .end

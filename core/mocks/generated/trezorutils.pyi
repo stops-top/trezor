@@ -75,17 +75,76 @@ def unit_btconly() -> bool | None:
 
 
 # extmod/modtrezorutils/modtrezorutils.c
-def reboot_to_bootloader() -> None:
+def unit_packaging() -> int | None:
+    """
+    Returns the packaging version of the unit.
+    """
+
+
+# extmod/modtrezorutils/modtrezorutils.c
+def sd_hotswap_enabled() -> bool:
+    """
+    Returns True if SD card hot swapping is enabled
+    """
+
+
+# extmod/modtrezorutils/modtrezorutils.c
+def reboot_to_bootloader(
+    boot_command : int = 0,
+    boot_args : bytes | None = None,
+) -> None:
     """
     Reboots to bootloader.
     """
+VersionTuple = Tuple[int, int, int, int]
+
+
+# extmod/modtrezorutils/modtrezorutils.c
+class FirmwareHeaderInfo(NamedTuple):
+    version: VersionTuple
+    vendor: str
+    fingerprint: bytes
+    hash: bytes
+
+
+# extmod/modtrezorutils/modtrezorutils.c
+def check_firmware_header(header : bytes) -> FirmwareHeaderInfo:
+    """Parses incoming firmware header and returns information about it."""
+
+
+# extmod/modtrezorutils/modtrezorutils.c
+def bootloader_locked() -> bool | None:
+    """
+    Returns True/False if the the bootloader is locked/unlocked and None if
+    the feature is not supported.
+    """
 SCM_REVISION: bytes
-VERSION_MAJOR: int
-VERSION_MINOR: int
-VERSION_PATCH: int
+"""Git commit hash of the firmware."""
+VERSION: VersionTuple
+"""Firmware version as a tuple (major, minor, patch, build)."""
 USE_SD_CARD: bool
+"""Whether the hardware supports SD card."""
 USE_BACKLIGHT: bool
+"""Whether the hardware supports backlight brightness control."""
+USE_HAPTIC: bool
+"""Whether the hardware supports haptic feedback."""
+USE_OPTIGA: bool
+"""Whether the hardware supports Optiga secure element."""
 MODEL: str
+"""Model name."""
+MODEL_FULL_NAME: str
+"""Full name including Trezor prefix."""
+MODEL_USB_MANUFACTURER: str
+"""USB Manufacturer name."""
+MODEL_USB_PRODUCT: str
+"""USB Product name."""
 INTERNAL_MODEL: str
+"""Internal model code."""
 EMULATOR: bool
+"""Whether the firmware is running in the emulator."""
 BITCOIN_ONLY: bool
+"""Whether the firmware is Bitcoin-only."""
+UI_LAYOUT: str
+"""UI layout identifier ("tt" for model T, "tr" for models One and R)."""
+USE_THP: bool
+"""Whether the firmware supports Trezor-Host Protocol (version 3)."""

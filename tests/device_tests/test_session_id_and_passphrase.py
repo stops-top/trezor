@@ -18,11 +18,13 @@ import random
 
 import pytest
 
-from trezorlib import device, exceptions, messages
+from trezorlib import device, exceptions, messages, models
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.exceptions import TrezorFailure
 from trezorlib.messages import FailureType, SafetyCheckLevel
 from trezorlib.tools import parse_path
+
+from .. import translations as TR
 
 XPUB_PASSPHRASES = {
     "A": "xpub6CekxGcnqnJ6osfY4Rrq7W5ogFtR54KUvz4H16XzaQuukMFZCGebEpVznfq4yFcKEmYyShwj2UKjL7CazuNSuhdkofF4mHabHkLxCMVvsqG",
@@ -239,7 +241,7 @@ def test_session_enable_passphrase(client: Client):
     assert _get_xpub(client, passphrase="A") == XPUB_PASSPHRASES["A"]
 
 
-@pytest.mark.skip_t1
+@pytest.mark.skip_t1b1
 @pytest.mark.setup_client(passphrase=True)
 def test_passphrase_on_device(client: Client):
     _init_session(client)
@@ -278,7 +280,7 @@ def test_passphrase_on_device(client: Client):
     assert response.xpub == XPUB_PASSPHRASES["A"]
 
 
-@pytest.mark.skip_t1
+@pytest.mark.skip_t1b1
 @pytest.mark.setup_client(passphrase=True)
 def test_passphrase_always_on_device(client: Client):
     # Let's start the communication by calling Initialize.
@@ -312,8 +314,9 @@ def test_passphrase_always_on_device(client: Client):
     assert response.xpub == XPUB_PASSPHRASES["A"]
 
 
-@pytest.mark.skip_t2
-@pytest.mark.skip_tr
+@pytest.mark.skip_t2t1
+@pytest.mark.skip_t2b1
+@pytest.mark.skip_t3t1
 @pytest.mark.setup_client(passphrase="")
 def test_passphrase_on_device_not_possible_on_t1(client: Client):
     # This setting makes no sense on T1.
@@ -377,7 +380,7 @@ def test_passphrase_length(client: Client):
     call(passphrase="A" * 49 + "š", expected_result=False)
 
 
-@pytest.mark.skip_t1
+@pytest.mark.skip_t1b1
 @pytest.mark.setup_client(passphrase=True)
 def test_hide_passphrase_from_host(client: Client):
     # Without safety checks, turning it on fails
@@ -395,19 +398,19 @@ def test_hide_passphrase_from_host(client: Client):
 
         def input_flow():
             yield
-            layout = client.debug.wait_layout()
-            if client.debug.model == "T":
-                assert (
-                    "Passphrase provided by host will be used but will not be displayed due to the device settings."
-                    in layout.text_content()
-                )
+            content = client.debug.wait_layout().text_content().lower()
+            assert any(
+                (s[:50].lower() in content)
+                for s in TR.translate("passphrase__from_host_not_shown")
+            )
+            if client.model in (models.T2T1, models.T3T1):
                 client.debug.press_yes()
-            elif client.debug.model == "R":
-                layout = client.debug.wait_layout()
-                assert "will not be displayed" in layout.text_content()
+            elif client.model is models.T2B1:
                 client.debug.press_right()
                 client.debug.press_right()
                 client.debug.press_yes()
+            else:
+                raise KeyError
 
         client.watch_layout()
         client.set_input_flow(input_flow)
@@ -433,15 +436,18 @@ def test_hide_passphrase_from_host(client: Client):
 
         def input_flow():
             yield
-            layout = client.debug.wait_layout()
-            assert "Next screen will show the passphrase" in layout.text_content()
+            TR.assert_in(
+                client.debug.wait_layout().text_content(),
+                "passphrase__next_screen_will_show_passphrase",
+            )
             client.debug.press_yes()
 
             yield
-            layout = client.debug.wait_layout()
-            assert "confirm passphrase" in layout.title().lower()
-
-            assert passphrase in layout.text_content()
+            TR.assert_equals(
+                client.debug.wait_layout().title(),
+                "passphrase__title_confirm",
+            )
+            assert passphrase in client.debug.wait_layout().text_content()
             client.debug.press_yes()
 
         client.watch_layout()
@@ -475,7 +481,7 @@ def _get_xpub_cardano(client: Client, passphrase):
     return response.xpub
 
 
-@pytest.mark.skip_t1
+@pytest.mark.skip_t1b1
 @pytest.mark.altcoin
 @pytest.mark.setup_client(passphrase=True)
 def test_cardano_passphrase(client: Client):

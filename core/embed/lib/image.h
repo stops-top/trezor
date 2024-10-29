@@ -21,12 +21,14 @@
 #define __TREZORHAL_IMAGE_H__
 
 #include <stdint.h>
+#include "blake2s.h"
 #include "flash.h"
+#include "image_hash_conf.h"
+#include "model.h"
 #include "secbool.h"
 
 #define IMAGE_HEADER_SIZE 0x400  // size of the bootloader or firmware header
 #define IMAGE_SIG_SIZE 65
-#define IMAGE_CHUNK_SIZE (128 * 1024)
 #define IMAGE_INIT_CHUNK_SIZE (16 * 1024)
 
 #define BOOTLOADER_IMAGE_MAGIC 0x425A5254  // TRZB
@@ -52,13 +54,28 @@ typedef struct {
 
 #define MAX_VENDOR_PUBLIC_KEYS 8
 
-#define VTRUST_WAIT 0x000F
-#define VTRUST_RED 0x0010
-#define VTRUST_CLICK 0x0020
-#define VTRUST_STRING 0x0040
-#define VTRUST_SECRET \
-  0x0080  // inverse logic, if set, don't allow to run with secret present
-#define VTRUST_ALL (VTRUST_WAIT | VTRUST_RED | VTRUST_CLICK | VTRUST_STRING)
+// The mask of the vendor screen wait time in seconds, encoded in bitwise
+// complement form.
+#define VTRUST_WAIT_MASK 0x000F
+
+// Use black background instead of red one in the vendor screen.
+#define VTRUST_NO_RED 0x0010
+
+// Do not require user click to leave the vendor screen.
+#define VTRUST_NO_CLICK 0x0020
+
+// Do not show vendor string in the vendor screen.
+#define VTRUST_NO_STRING 0x0040
+
+// Two bits for historical reasons. On T2B1, only the lower bit was used with
+// inverted logic (due to late inclusion of the secret handling during
+// development process). On T3T1, we decided to remedy the situation by
+// including the upper bit as well.
+#define VTRUST_SECRET_MASK 0x0180
+#define VTRUST_SECRET_ALLOW 0x0100
+
+#define VTRUST_NO_WARNING \
+  (VTRUST_WAIT_MASK | VTRUST_NO_RED | VTRUST_NO_CLICK | VTRUST_NO_STRING)
 
 typedef struct {
   uint32_t magic;
@@ -78,6 +95,22 @@ typedef struct {
   const uint8_t *origin;  // pointer to the underlying data
 } vendor_header;
 
+typedef struct {
+  // vendor string
+  uint8_t vstr[64];
+  // vendor string length
+  size_t vstr_len;
+  // firmware version
+  uint8_t ver_major;
+  uint8_t ver_minor;
+  uint8_t ver_patch;
+  uint8_t ver_build;
+  // firmware fingerprint
+  uint8_t fingerprint[IMAGE_HASH_DIGEST_LENGTH];
+  // hash of vendor and image header
+  uint8_t hash[IMAGE_HASH_DIGEST_LENGTH];
+} firmware_header_info_t;
+
 const image_header *read_image_header(const uint8_t *const data,
                                       const uint32_t magic,
                                       const uint32_t maxsize);
@@ -95,6 +128,8 @@ secbool __wur check_vendor_header_sig(const vendor_header *const vhdr,
                                       uint8_t key_m, uint8_t key_n,
                                       const uint8_t *const *keys);
 
+secbool check_vendor_header_keys(const vendor_header *const vhdr);
+
 void vendor_header_hash(const vendor_header *const vhdr, uint8_t *hash);
 
 secbool __wur check_single_hash(const uint8_t *const hash,
@@ -105,5 +140,8 @@ secbool __wur check_image_contents(const image_header *const hdr,
                                    const flash_area_t *area);
 
 void get_image_fingerprint(const image_header *const hdr, uint8_t *const out);
+
+secbool check_firmware_header(const uint8_t *header, size_t header_size,
+                              firmware_header_info_t *info);
 
 #endif

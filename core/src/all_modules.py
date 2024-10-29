@@ -91,8 +91,12 @@ trezor.crypto.slip39
 import trezor.crypto.slip39
 trezor.enums.AmountUnit
 import trezor.enums.AmountUnit
+trezor.enums.BackupAvailability
+import trezor.enums.BackupAvailability
 trezor.enums.BackupType
 import trezor.enums.BackupType
+trezor.enums.BootCommand
+import trezor.enums.BootCommand
 trezor.enums.ButtonRequestType
 import trezor.enums.ButtonRequestType
 trezor.enums.Capability
@@ -117,8 +121,12 @@ trezor.enums.OutputScriptType
 import trezor.enums.OutputScriptType
 trezor.enums.PinMatrixRequestType
 import trezor.enums.PinMatrixRequestType
-trezor.enums.RecoveryDeviceType
-import trezor.enums.RecoveryDeviceType
+trezor.enums.RecoveryDeviceInputMethod
+import trezor.enums.RecoveryDeviceInputMethod
+trezor.enums.RecoveryStatus
+import trezor.enums.RecoveryStatus
+trezor.enums.RecoveryType
+import trezor.enums.RecoveryType
 trezor.enums.RequestType
 import trezor.enums.RequestType
 trezor.enums.SafetyCheckLevel
@@ -155,6 +163,16 @@ trezor.ui.layouts.fido
 import trezor.ui.layouts.fido
 trezor.ui.layouts.homescreen
 import trezor.ui.layouts.homescreen
+trezor.ui.layouts.mercury
+import trezor.ui.layouts.mercury
+trezor.ui.layouts.mercury.fido
+import trezor.ui.layouts.mercury.fido
+trezor.ui.layouts.mercury.homescreen
+import trezor.ui.layouts.mercury.homescreen
+trezor.ui.layouts.mercury.recovery
+import trezor.ui.layouts.mercury.recovery
+trezor.ui.layouts.mercury.reset
+import trezor.ui.layouts.mercury.reset
 trezor.ui.layouts.progress
 import trezor.ui.layouts.progress
 trezor.ui.layouts.recovery
@@ -167,26 +185,20 @@ trezor.ui.layouts.tr.fido
 import trezor.ui.layouts.tr.fido
 trezor.ui.layouts.tr.homescreen
 import trezor.ui.layouts.tr.homescreen
-trezor.ui.layouts.tr.progress
-import trezor.ui.layouts.tr.progress
 trezor.ui.layouts.tr.recovery
 import trezor.ui.layouts.tr.recovery
 trezor.ui.layouts.tr.reset
 import trezor.ui.layouts.tr.reset
-trezor.ui.layouts.tt_v2
-import trezor.ui.layouts.tt_v2
-trezor.ui.layouts.tt_v2.fido
-import trezor.ui.layouts.tt_v2.fido
-trezor.ui.layouts.tt_v2.homescreen
-import trezor.ui.layouts.tt_v2.homescreen
-trezor.ui.layouts.tt_v2.progress
-import trezor.ui.layouts.tt_v2.progress
-trezor.ui.layouts.tt_v2.recovery
-import trezor.ui.layouts.tt_v2.recovery
-trezor.ui.layouts.tt_v2.reset
-import trezor.ui.layouts.tt_v2.reset
-trezor.ui.style
-import trezor.ui.style
+trezor.ui.layouts.tt
+import trezor.ui.layouts.tt
+trezor.ui.layouts.tt.fido
+import trezor.ui.layouts.tt.fido
+trezor.ui.layouts.tt.homescreen
+import trezor.ui.layouts.tt.homescreen
+trezor.ui.layouts.tt.recovery
+import trezor.ui.layouts.tt.recovery
+trezor.ui.layouts.tt.reset
+import trezor.ui.layouts.tt.reset
 trezor.utils
 import trezor.utils
 trezor.wire
@@ -277,6 +289,10 @@ apps.common.address_type
 import apps.common.address_type
 apps.common.authorization
 import apps.common.authorization
+apps.common.backup
+import apps.common.backup
+apps.common.backup_types
+import apps.common.backup_types
 apps.common.cbor
 import apps.common.cbor
 apps.common.coininfo
@@ -313,10 +329,12 @@ apps.management.apply_flags
 import apps.management.apply_flags
 apps.management.apply_settings
 import apps.management.apply_settings
+apps.management.authenticate_device
+import apps.management.authenticate_device
 apps.management.backup_device
 import apps.management.backup_device
-apps.management.backup_types
-import apps.management.backup_types
+apps.management.change_language
+import apps.management.change_language
 apps.management.change_pin
 import apps.management.change_pin
 apps.management.change_wipe_code
@@ -343,6 +361,8 @@ apps.management.reset_device.layout
 import apps.management.reset_device.layout
 apps.management.sd_protect
 import apps.management.sd_protect
+apps.management.set_brightness
+import apps.management.set_brightness
 apps.management.set_u2f_counter
 import apps.management.set_u2f_counter
 apps.management.show_tutorial
@@ -353,8 +373,6 @@ apps.misc
 import apps.misc
 apps.misc.cipher_key_value
 import apps.misc.cipher_key_value
-apps.misc.cosi_commit
-import apps.misc.cosi_commit
 apps.misc.get_ecdh_session_key
 import apps.misc.get_ecdh_session_key
 apps.misc.get_entropy
@@ -379,6 +397,8 @@ if not utils.BITCOIN_ONLY:
     import trezor.enums.CardanoCVoteRegistrationFormat
     trezor.enums.CardanoCertificateType
     import trezor.enums.CardanoCertificateType
+    trezor.enums.CardanoDRepType
+    import trezor.enums.CardanoDRepType
     trezor.enums.CardanoDerivationType
     import trezor.enums.CardanoDerivationType
     trezor.enums.CardanoNativeScriptHashDisplayFormat
@@ -529,6 +549,8 @@ if not utils.BITCOIN_ONLY:
     import apps.ethereum.sign_tx_eip1559
     apps.ethereum.sign_typed_data
     import apps.ethereum.sign_typed_data
+    apps.ethereum.staking_tx_constants
+    import apps.ethereum.staking_tx_constants
     apps.ethereum.tokens
     import apps.ethereum.tokens
     apps.ethereum.verify_message
@@ -677,6 +699,34 @@ if not utils.BITCOIN_ONLY:
     import apps.ripple.serialize
     apps.ripple.sign_tx
     import apps.ripple.sign_tx
+    apps.solana
+    import apps.solana
+    apps.solana.constants
+    import apps.solana.constants
+    apps.solana.format
+    import apps.solana.format
+    apps.solana.get_address
+    import apps.solana.get_address
+    apps.solana.get_public_key
+    import apps.solana.get_public_key
+    apps.solana.layout
+    import apps.solana.layout
+    apps.solana.predefined_transaction
+    import apps.solana.predefined_transaction
+    apps.solana.sign_tx
+    import apps.solana.sign_tx
+    apps.solana.token_account
+    import apps.solana.token_account
+    apps.solana.transaction
+    import apps.solana.transaction
+    apps.solana.transaction.instruction
+    import apps.solana.transaction.instruction
+    apps.solana.transaction.instructions
+    import apps.solana.transaction.instructions
+    apps.solana.transaction.parse
+    import apps.solana.transaction.parse
+    apps.solana.types
+    import apps.solana.types
     apps.stellar
     import apps.stellar
     apps.stellar.consts

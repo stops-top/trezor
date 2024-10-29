@@ -66,11 +66,9 @@ if TYPE_CHECKING:
         vout: List[Vout]
 
     class TxCacheType(Protocol):
-        def __getitem__(self, __key: bytes) -> messages.TransactionType:
-            ...
+        def __getitem__(self, __key: bytes) -> messages.TransactionType: ...
 
-        def __contains__(self, __key: bytes) -> bool:
-            ...
+        def __contains__(self, __key: bytes) -> bool: ...
 
 
 def from_json(json_dict: "Transaction") -> messages.TransactionType:
@@ -152,6 +150,7 @@ def get_authenticated_address(
     ignore_xpub_magic: bool = False,
     unlock_path: Optional[List[int]] = None,
     unlock_path_mac: Optional[bytes] = None,
+    chunkify: bool = False,
 ) -> "MessageType":
     if unlock_path:
         res = client.call(
@@ -168,6 +167,7 @@ def get_authenticated_address(
             multisig=multisig,
             script_type=script_type,
             ignore_xpub_magic=ignore_xpub_magic,
+            chunkify=chunkify,
         )
     )
 
@@ -232,6 +232,7 @@ def sign_message(
     message: AnyStr,
     script_type: messages.InputScriptType = messages.InputScriptType.SPENDADDRESS,
     no_script_type: bool = False,
+    chunkify: bool = False,
 ) -> "MessageType":
     return client.call(
         messages.SignMessage(
@@ -240,6 +241,7 @@ def sign_message(
             message=prepare_message_bytes(message),
             script_type=script_type,
             no_script_type=no_script_type,
+            chunkify=chunkify,
         )
     )
 
@@ -250,6 +252,7 @@ def verify_message(
     address: str,
     signature: bytes,
     message: AnyStr,
+    chunkify: bool = False,
 ) -> bool:
     try:
         resp = client.call(
@@ -258,6 +261,7 @@ def verify_message(
                 signature=signature,
                 message=prepare_message_bytes(message),
                 coin_name=coin_name,
+                chunkify=chunkify,
             )
         )
     except exceptions.TrezorFailure:

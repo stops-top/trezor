@@ -20,7 +20,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include TREZOR_BOARD
-#include "display_interface.h"
+#include "display.h"
 #include STM32_HAL_H
 
 #ifdef USE_CONSUMPTION_MASK
@@ -92,11 +92,9 @@ void display_pixeldata(uint16_t c) {
   }
 }
 
-#define PIXELDATA(c) display_pixeldata(c)
-
 void display_reset_state() {}
 
-void pixeldata_dirty(void) { pixeldata_dirty_flag = true; }
+void display_pixeldata_dirty(void) { pixeldata_dirty_flag = true; }
 
 void display_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   PIXELWINDOW.start.x = x0;
@@ -141,7 +139,8 @@ static inline void spi_send(const uint8_t *data, int len) {
 
 void display_handle_init(void) {
   spi_handle.Instance = OLED_SPI;
-  spi_handle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  spi_handle.State = HAL_SPI_STATE_RESET;
+  spi_handle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   spi_handle.Init.Direction = SPI_DIRECTION_2LINES;
   spi_handle.Init.CLKPhase = SPI_PHASE_1EDGE;
   spi_handle.Init.CLKPolarity = SPI_POLARITY_LOW;
@@ -162,7 +161,7 @@ void display_init(void) {
   OLED_SPI_MOSI_CLK_ENA();
   OLED_SPI_CLK_ENA();
 
-  GPIO_InitTypeDef GPIO_InitStructure;
+  GPIO_InitTypeDef GPIO_InitStructure = {0};
 
   // set GPIO for OLED display
   GPIO_InitStructure.Mode = GPIO_MODE_OUTPUT_PP;
@@ -241,7 +240,10 @@ void display_init(void) {
   display_refresh();
 }
 
-void display_reinit(void) { display_handle_init(); }
+void display_reinit(void) {
+  display_handle_init();
+  HAL_SPI_Init(&spi_handle);
+}
 
 static inline uint8_t reverse_byte(uint8_t b) {
   b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
@@ -295,3 +297,5 @@ void display_refresh(void) {
 const char *display_save(const char *prefix) { return NULL; }
 
 void display_clear_save(void) {}
+
+void display_finish_actions(void) {}

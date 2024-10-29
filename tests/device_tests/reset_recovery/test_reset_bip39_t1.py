@@ -23,7 +23,7 @@ from trezorlib.tools import parse_path
 
 from ...common import EXTERNAL_ENTROPY, generate_entropy
 
-pytestmark = [pytest.mark.skip_t2, pytest.mark.skip_tr]
+pytestmark = [pytest.mark.skip_t2t1, pytest.mark.skip_t2b1, pytest.mark.skip_t3t1]
 
 
 def reset_device(client: Client, strength: int):
@@ -34,7 +34,6 @@ def reset_device(client: Client, strength: int):
             strength=strength,
             passphrase_protection=False,
             pin_protection=False,
-            language="en-US",
             label="test",
         )
     )
@@ -81,7 +80,7 @@ def reset_device(client: Client, strength: int):
     # Check if device is properly initialized
     resp = client.call_raw(messages.Initialize())
     assert resp.initialized is True
-    assert resp.needs_backup is False
+    assert resp.backup_availability == messages.BackupAvailability.NotAvailable
     assert resp.pin_protection is False
     assert resp.passphrase_protection is False
 
@@ -110,7 +109,6 @@ def test_reset_device_256_pin(client: Client):
             strength=strength,
             passphrase_protection=True,
             pin_protection=True,
-            language="en-US",
             label="test",
         )
     )
@@ -179,7 +177,7 @@ def test_reset_device_256_pin(client: Client):
     # Check if device is properly initialized
     resp = client.call_raw(messages.Initialize())
     assert resp.initialized is True
-    assert resp.needs_backup is False
+    assert resp.backup_availability == messages.BackupAvailability.NotAvailable
     assert resp.pin_protection is True
     assert resp.passphrase_protection is True
 
@@ -199,7 +197,6 @@ def test_failed_pin(client: Client):
             strength=strength,
             passphrase_protection=True,
             pin_protection=True,
-            language="en-US",
             label="test",
         )
     )
@@ -235,4 +232,4 @@ def test_failed_pin(client: Client):
 
 def test_already_initialized(client: Client):
     with pytest.raises(Exception):
-        device.reset(client, False, 128, True, True, "label", "en-US")
+        device.reset(client, False, 128, True, True, "label")

@@ -5,6 +5,8 @@ use core::{
 
 use super::ffi;
 
+pub use ffi::TEXT_BUFFER_HEIGHT;
+
 macro_rules! buffer_wrapper {
     ($rust_name: ident, $type: ident, $get: ident, $free: ident) => {
         pub struct $rust_name(ptr::NonNull<ffi::$type>);
@@ -76,6 +78,12 @@ buffer_wrapper!(
     buffer_blurring_t,
     buffers_get_blurring,
     buffers_free_blurring
+);
+buffer_wrapper!(
+    BufferBlurringTotals,
+    buffer_blurring_totals_t,
+    buffers_get_blurring_totals,
+    buffers_free_blurring_totals
 );
 #[cfg(feature = "jpeg")]
 buffer_wrapper!(

@@ -34,7 +34,6 @@ from . import (
     binance,
     btc,
     cardano,
-    cosi,
     crypto,
     debug,
     device,
@@ -46,6 +45,7 @@ from . import (
     nem,
     ripple,
     settings,
+    solana,
     stellar,
     tezos,
     with_client,
@@ -68,7 +68,7 @@ COMMAND_ALIASES = {
     "backup-device": device.backup,
     "sd-protect": device.sd_protect,
     "load-device": device.load,
-    "self-test": device.self_test,
+    "prodtest-t1": debug.prodtest_t1,
     "get-entropy": crypto.get_entropy,
     "encrypt-keyvalue": crypto.encrypt_keyvalue,
     "decrypt-keyvalue": crypto.decrypt_keyvalue,
@@ -76,6 +76,7 @@ COMMAND_ALIASES = {
     "bnb": binance.cli,
     "eth": ethereum.cli,
     "ada": cardano.cli,
+    "sol": solana.cli,
     "xmr": monero.cli,
     "xrp": ripple.cli,
     "xlm": stellar.cli,
@@ -117,7 +118,7 @@ class TrezorctlGroup(AliasedGroup):
             command, subcommand = cmd_name.split("-", maxsplit=1)
             # get_command can return None and the following line will fail.
             # We don't care, we ignore the exception anyway.
-            return super().get_command(ctx, command).get_command(ctx, subcommand)  # type: ignore ["get_command" is not a known member of "None";;Cannot access member "get_command" for type "Command"]
+            return super().get_command(ctx, command).get_command(ctx, subcommand)  # type: ignore [get_command]
         except Exception:
             pass
 
@@ -141,7 +142,7 @@ class TrezorctlGroup(AliasedGroup):
         from click import __version__ as click_version
 
         if click_version.startswith("7."):
-            return super().resultcallback()  # type: ignore [Cannot access member]
+            return super().resultcallback()  # type: ignore [Cannot access attribute]
         else:
             return super().result_callback()
 
@@ -400,7 +401,6 @@ def wait_for_emulator(obj: TrezorConnection, timeout: float) -> None:
 cli.add_command(binance.cli)
 cli.add_command(btc.cli)
 cli.add_command(cardano.cli)
-cli.add_command(cosi.cli)
 cli.add_command(crypto.cli)
 cli.add_command(device.cli)
 cli.add_command(eos.cli)
@@ -410,6 +410,7 @@ cli.add_command(monero.cli)
 cli.add_command(nem.cli)
 cli.add_command(ripple.cli)
 cli.add_command(settings.cli)
+cli.add_command(solana.cli)
 cli.add_command(stellar.cli)
 cli.add_command(tezos.cli)
 

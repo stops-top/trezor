@@ -41,11 +41,15 @@
 #include "common.h"
 #include "compiler_traits.h"
 #include "display.h"
+#include "fault_handlers.h"
 #include "flash.h"
 #include "image.h"
+#include "memzero.h"
 #include "model.h"
 #include "mpu.h"
 #include "random_delays.h"
+#include "rust_ui.h"
+#include "secure_aes.h"
 
 #include TREZOR_BOARD
 
@@ -70,9 +74,18 @@
 #ifdef USE_SD_CARD
 #include "sdcard.h"
 #endif
+#ifdef USE_HASH_PROCESSOR
+#include "hash_processor.h"
+#endif
+
 #ifdef USE_OPTIGA
+#include "optiga_commands.h"
 #include "optiga_transport.h"
 #endif
+#if defined USE_OPTIGA | defined STM32U5
+#include "secret.h"
+#endif
+
 #include "unit_variant.h"
 
 #ifdef SYSTEM_VIEW
@@ -84,9 +97,32 @@
 #ifdef USE_SECP256K1_ZKP
 #include "zkp_context.h"
 #endif
+#ifdef USE_HAPTIC
+#include "haptic.h"
+#endif
 
 // from util.s
 extern void shutdown_privileged(void);
+
+#ifdef USE_OPTIGA
+#if !PYOPT
+#include <inttypes.h>
+#if 1  // color log
+#define OPTIGA_LOG_FORMAT \
+  "%" PRIu32 " \x1b[35moptiga\x1b[0m \x1b[32mDEBUG\x1b[0m %s: "
+#else
+#define OPTIGA_LOG_FORMAT "%" PRIu32 " optiga DEBUG %s: "
+#endif
+static void optiga_log_hex(const char *prefix, const uint8_t *data,
+                           size_t data_size) {
+  printf(OPTIGA_LOG_FORMAT, hal_ticks_ms() * 1000, prefix);
+  for (size_t i = 0; i < data_size; i++) {
+    printf("%02x", data[i]);
+  }
+  printf("\n");
+}
+#endif
+#endif
 
 int main(void) {
   random_delays_init();
@@ -100,18 +136,43 @@ int main(void) {
   HAL_Init();
 #endif
 
-  collect_hw_entropy();
-
 #ifdef SYSTEM_VIEW
   enable_systemview();
 #endif
 
+#ifdef USE_HASH_PROCESSOR
+  hash_processor_init();
+#endif
+
+#ifdef USE_DMA2D
+  dma2d_init();
+#endif
+
   display_reinit();
+
+#ifdef STM32U5
+  check_oem_keys();
+#endif
+
+  screen_boot_stage_2();
 
 #if !defined TREZOR_MODEL_1
   parse_boardloader_capabilities();
 
   unit_variant_init();
+
+#ifdef STM32U5
+  secure_aes_init();
+#endif
+
+#ifdef USE_OPTIGA
+  uint8_t secret[SECRET_OPTIGA_KEY_LEN] = {0};
+  secbool secret_ok = secret_optiga_get(secret);
+#endif
+
+  mpu_config_firmware_initial();
+
+  collect_hw_entropy();
 
 #if PRODUCTION || BOOTLOADER_QA
   check_and_replace_bootloader();
@@ -123,14 +184,7 @@ int main(void) {
   // Init peripherals
   pendsv_init();
 
-#ifdef USE_DMA2D
-  dma2d_init();
-#endif
-
-#if !PRODUCTION
-  // enable BUS fault and USAGE fault handlers
-  SCB->SHCSR |= (SCB_SHCSR_USGFAULTENA_Msk | SCB_SHCSR_BUSFAULTENA_Msk);
-#endif
+  fault_handlers_init();
 
 #if defined TREZOR_MODEL_T
   set_core_clock(CLOCK_180_MHZ);
@@ -160,8 +214,25 @@ int main(void) {
   sdcard_init();
 #endif
 
+#ifdef USE_HAPTIC
+  haptic_init();
+#endif
+
 #ifdef USE_OPTIGA
+
+#if !PYOPT
+  // command log is relatively quiet so we enable it in debug builds
+  optiga_command_set_log_hex(optiga_log_hex);
+  // transport log can be spammy, uncomment if you want it:
+  // optiga_transport_set_log_hex(optiga_log_hex);
+#endif
+
   optiga_init();
+  optiga_open_application();
+  if (sectrue == secret_ok) {
+    optiga_sec_chan_handshake(secret, sizeof(secret));
+  }
+  memzero(secret, sizeof(secret));
 #endif
 
 #if !defined TREZOR_MODEL_1
@@ -202,90 +273,16 @@ int main(void) {
   printf("CORE: Main script finished, cleaning up\n");
   mp_deinit();
 
+  // Python code shouldn't ever exit, avoid black screen if it does
+  error_shutdown("(PE)");
+
   return 0;
 }
 
 // MicroPython default exception handler
 
 void __attribute__((noreturn)) nlr_jump_fail(void *val) {
-  error_shutdown("INTERNAL ERROR", "(UE)");
-}
-
-// interrupt handlers
-
-void NMI_Handler(void) {
-  // Clock Security System triggered NMI
-  if ((RCC->CIR & RCC_CIR_CSSF) != 0) {
-    error_shutdown("INTERNAL ERROR", "(CS)");
-  }
-}
-
-void HardFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(HF)"); }
-
-void MemManage_Handler_MM(void) { error_shutdown("INTERNAL ERROR", "(MM)"); }
-
-void MemManage_Handler_SO(void) { error_shutdown("INTERNAL ERROR", "(SO)"); }
-
-void BusFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(BF)"); }
-
-void UsageFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(UF)"); }
-
-__attribute__((noreturn)) void reboot_to_bootloader() {
-  jump_to_with_flag(BOOTLOADER_START + IMAGE_HEADER_SIZE,
-                    STAY_IN_BOOTLOADER_FLAG);
-  for (;;)
-    ;
-}
-
-void SVC_C_Handler(uint32_t *stack) {
-  uint8_t svc_number = ((uint8_t *)stack[6])[-2];
-  switch (svc_number) {
-    case SVC_ENABLE_IRQ:
-      HAL_NVIC_EnableIRQ(stack[0]);
-      break;
-    case SVC_DISABLE_IRQ:
-      HAL_NVIC_DisableIRQ(stack[0]);
-      break;
-    case SVC_SET_PRIORITY:
-      NVIC_SetPriority(stack[0], stack[1]);
-      break;
-#ifdef SYSTEM_VIEW
-    case SVC_GET_DWT_CYCCNT:
-      cyccnt_cycles = *DWT_CYCCNT_ADDR;
-      break;
-#endif
-    case SVC_SHUTDOWN:
-      shutdown_privileged();
-      for (;;)
-        ;
-      break;
-    case SVC_REBOOT_TO_BOOTLOADER:
-      ensure_compatible_settings();
-      mpu_config_bootloader();
-      __asm__ volatile("msr control, %0" ::"r"(0x0));
-      __asm__ volatile("isb");
-      // See stack layout in
-      // https://developer.arm.com/documentation/ka004005/latest We are changing
-      // return address in PC to land into reboot to avoid any bug with ROP and
-      // raising privileges.
-      stack[6] = (uintptr_t)reboot_to_bootloader;
-      return;
-    default:
-      stack[0] = 0xffffffff;
-      break;
-  }
-}
-
-__attribute__((naked)) void SVC_Handler(void) {
-  __asm volatile(
-      " tst lr, #4    \n"    // Test Bit 3 to see which stack pointer we should
-                             // use.
-      " ite eq        \n"    // Tell the assembler that the nest 2 instructions
-                             // are if-then-else
-      " mrseq r0, msp \n"    // Make R0 point to main stack pointer
-      " mrsne r0, psp \n"    // Make R0 point to process stack pointer
-      " b SVC_C_Handler \n"  // Off to C land
-  );
+  error_shutdown("(UE)");
 }
 
 // MicroPython builtin stubs

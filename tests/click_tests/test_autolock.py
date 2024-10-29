@@ -20,15 +20,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trezorlib import btc, device, exceptions, messages
+from trezorlib import btc, device, exceptions, messages, models
 from trezorlib.protobuf import MessageType
 from trezorlib.tools import parse_path
 
 from .. import buttons, common
+from .. import translations as TR
 from ..device_tests.bitcoin.payment_req import make_coinjoin_request
 from ..tx_cache import TxCache
 from . import recovery
-from .common import go_next
+from .common import go_next, tap_to_confirm, unlock_gesture
 
 if TYPE_CHECKING:
     from trezorlib.debuglink import DebugLink, LayoutContent
@@ -63,11 +64,14 @@ def set_autolock_delay(device_handler: "BackgroundDeviceHandler", delay_ms: int)
 
     debug.input("1234")
 
-    assert (
-        f"Auto-lock your Trezor after {delay_ms // 1000} seconds"
-        in debug.wait_layout().text_content()
+    TR.assert_template(
+        debug.wait_layout().text_content(),
+        "auto_lock__change_template",
     )
+
     layout = go_next(debug, wait=True)
+    if debug.model in (models.T3T1,):
+        layout = tap_to_confirm(debug, wait=True)
     assert layout.main_component() == "Homescreen"
     assert device_handler.result() == "Settings applied"
 
@@ -100,14 +104,21 @@ def test_autolock_interrupts_signing(device_handler: "BackgroundDeviceHandler"):
         in debug.wait_layout().text_content().replace(" ", "")
     )
 
-    if debug.model == "T":
+    if debug.model in (models.T2T1,):
         debug.click(buttons.OK, wait=True)
         layout = debug.click(buttons.OK, wait=True)
-        assert "Total amount: 0.0039 BTC" in layout.text_content()
-    elif debug.model == "R":
+        TR.assert_in(layout.text_content(), "send__total_amount")
+        assert "0.0039 BTC" in layout.text_content()
+    elif debug.model in (models.T3T1,):
+        debug.swipe_up(wait=True)
+        layout = debug.swipe_up(wait=True)
+        TR.assert_in(layout.text_content(), "send__total_amount")
+        assert "0.0039 BTC" in layout.text_content()
+    elif debug.model in (models.T2B1,):
         debug.press_right(wait=True)
         layout = debug.press_right(wait=True)
-        assert "Total amount: 0.0039 BTC" in layout.text_content()
+        TR.assert_in(layout.text_content(), "send__total_amount")
+        assert "0.0039 BTC" in layout.text_content()
 
     # wait for autolock to kick in
     time.sleep(10.1)
@@ -145,14 +156,22 @@ def test_autolock_does_not_interrupt_signing(device_handler: "BackgroundDeviceHa
         in debug.wait_layout().text_content().replace(" ", "")
     )
 
-    if debug.model == "T":
+    if debug.model in (models.T2T1,):
         debug.click(buttons.OK, wait=True)
         layout = debug.click(buttons.OK, wait=True)
-        assert "Total amount: 0.0039 BTC" in layout.text_content()
-    elif debug.model == "R":
+        TR.assert_in(layout.text_content(), "send__total_amount")
+        assert "0.0039 BTC" in layout.text_content()
+    elif debug.model in (models.T3T1,):
+        debug.swipe_up(wait=True)
+        layout = debug.swipe_up(wait=True)
+        TR.assert_in(layout.text_content(), "send__total_amount")
+        assert "0.0039 BTC" in layout.text_content()
+        debug.swipe_up(wait=True)
+    elif debug.model in (models.T2B1,):
         debug.press_right(wait=True)
         layout = debug.press_right(wait=True)
-        assert "Total amount: 0.0039 BTC" in layout.text_content()
+        TR.assert_in(layout.text_content(), "send__total_amount")
+        assert "0.0039 BTC" in layout.text_content()
 
     def sleepy_filter(msg: MessageType) -> MessageType:
         time.sleep(10.1)
@@ -162,9 +181,11 @@ def test_autolock_does_not_interrupt_signing(device_handler: "BackgroundDeviceHa
     with device_handler.client:
         device_handler.client.set_filter(messages.TxAck, sleepy_filter)
         # confirm transaction
-        if debug.model == "T":
+        if debug.model in (models.T2T1,):
             debug.click(buttons.OK)
-        elif debug.model == "R":
+        elif debug.model in (models.T3T1,):
+            debug.click(buttons.TAP_TO_CONFIRM)
+        elif debug.model in (models.T2B1,):
             debug.press_middle()
 
         signatures, tx = device_handler.result()
@@ -184,17 +205,20 @@ def test_autolock_passphrase_keyboard(device_handler: "BackgroundDeviceHandler")
 
     assert "PassphraseKeyboard" in debug.wait_layout().all_components()
 
-    if debug.model == "R":
+    if debug.model in (models.T2B1,):
         # Going into the selected character category
         debug.press_middle()
 
     # enter passphrase - slowly
     # keep clicking for long enough to trigger the autolock if it incorrectly ignored key presses
     for _ in range(math.ceil(11 / 1.5)):
-        if debug.model == "T":
+        if debug.model in (models.T2T1,):
             # click at "j"
             debug.click(CENTER_BUTTON)
-        elif debug.model == "R":
+        elif debug.model in (models.T3T1,):
+            # click at "j"
+            debug.click((20, 120))
+        elif debug.model in (models.T2B1,):
             # just go right
             # NOTE: because of passphrase randomization it would be a pain to input
             # a specific passphrase, which is not in scope for this test.
@@ -202,9 +226,11 @@ def test_autolock_passphrase_keyboard(device_handler: "BackgroundDeviceHandler")
         time.sleep(1.5)
 
     # Send the passphrase to the client (TT has it clicked already, TR needs to input it)
-    if debug.model == "T":
+    if debug.model in (models.T2T1,):
         debug.click(buttons.OK, wait=True)
-    elif debug.model == "R":
+    elif debug.model in (models.T3T1,):
+        debug.click(buttons.CORNER_BUTTON, wait=True)
+    elif debug.model in (models.T2B1,):
         debug.input("j" * 8, wait=True)
 
     # address corresponding to "jjjjjjjj" passphrase
@@ -221,16 +247,16 @@ def test_autolock_interrupts_passphrase(device_handler: "BackgroundDeviceHandler
 
     assert "PassphraseKeyboard" in debug.wait_layout().all_components()
 
-    if debug.model == "R":
+    if debug.model in (models.T2B1,):
         # Going into the selected character category
         debug.press_middle()
 
     # enter passphrase - slowly
     # autolock must activate even if we pressed some buttons
     for _ in range(math.ceil(6 / 1.5)):
-        if debug.model == "T":
+        if debug.model in (models.T2T1, models.T3T1):
             debug.click(CENTER_BUTTON)
-        elif debug.model == "R":
+        elif debug.model in (models.T2B1,):
             debug.press_middle()
         time.sleep(1.5)
 
@@ -242,7 +268,7 @@ def test_autolock_interrupts_passphrase(device_handler: "BackgroundDeviceHandler
 
 
 def unlock_dry_run(debug: "DebugLink") -> "LayoutContent":
-    assert "Check your backup?" in debug.wait_layout().text_content()
+    TR.assert_in(debug.wait_layout().text_content(), "recovery__check_dry_run")
     layout = go_next(debug, wait=True)
     assert "PinKeyboard" in layout.all_components()
 
@@ -259,9 +285,9 @@ def test_dryrun_locks_at_number_of_words(device_handler: "BackgroundDeviceHandle
     device_handler.run(device.recover, dry_run=True)  # type: ignore
 
     layout = unlock_dry_run(debug)
-    assert "number of words" in layout.text_content()
+    TR.assert_in(debug.wait_layout().text_content(), "recovery__num_of_words")
 
-    if debug.model == "R":
+    if debug.model in (models.T2B1,):
         debug.press_right(wait=True)
 
     # wait for autolock to trigger
@@ -273,13 +299,14 @@ def test_dryrun_locks_at_number_of_words(device_handler: "BackgroundDeviceHandle
     # unlock
     # lockscreen triggered automatically
     debug.wait_layout(wait_for_external_change=True)
-    layout = go_next(debug, wait=True)
+    layout = unlock_gesture(debug, wait=True)
+
     assert "PinKeyboard" in layout.all_components()
     layout = debug.input(PIN4, wait=True)
     assert layout is not None
 
     # we are back at homescreen
-    assert "number of words" in layout.text_content()
+    TR.assert_in(debug.wait_layout().text_content(), "recovery__num_of_words")
 
 
 @pytest.mark.setup_client(pin=PIN4)
@@ -294,10 +321,10 @@ def test_dryrun_locks_at_word_entry(device_handler: "BackgroundDeviceHandler"):
     # select 20 words
     recovery.select_number_of_words(debug, 20)
 
-    if debug.model == "T":
-        layout = debug.click(buttons.OK, wait=True)
+    if debug.model in (models.T2T1, models.T3T1):
+        layout = go_next(debug, wait=True)
         assert layout.main_component() == "MnemonicKeyboard"
-    elif debug.model == "R":
+    elif debug.model in (models.T2B1,):
         layout = debug.press_right(wait=True)
         assert "MnemonicKeyboard" in layout.all_components()
 
@@ -320,7 +347,7 @@ def test_dryrun_enter_word_slowly(device_handler: "BackgroundDeviceHandler"):
     # select 20 words
     recovery.select_number_of_words(debug, 20)
 
-    if debug.model == "T":
+    if debug.model in (models.T2T1,):
         layout = debug.click(buttons.OK, wait=True)
         assert layout.main_component() == "MnemonicKeyboard"
 
@@ -331,7 +358,18 @@ def test_dryrun_enter_word_slowly(device_handler: "BackgroundDeviceHandler"):
         layout = debug.click(buttons.CONFIRM_WORD, wait=True)
         # should not have locked, even though we took 9 seconds to type each letter
         assert layout.main_component() == "MnemonicKeyboard"
-    elif debug.model == "R":
+    elif debug.model in (models.T3T1,):
+        layout = debug.swipe_up(wait=True)
+        assert layout.main_component() == "MnemonicKeyboard"
+
+        # type the word OCEAN slowly
+        for coords in buttons.type_word("ocea", is_slip39=True):
+            time.sleep(9)
+            debug.click(coords)
+        layout = debug.click(buttons.CONFIRM_WORD, wait=True)
+        # should not have locked, even though we took 9 seconds to type each letter
+        assert layout.main_component() == "MnemonicKeyboard"
+    elif debug.model in (models.T2B1,):
         layout = debug.press_right(wait=True)
         assert "MnemonicKeyboard" in layout.all_components()
 

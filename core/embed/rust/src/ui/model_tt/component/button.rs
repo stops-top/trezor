@@ -1,4 +1,7 @@
+#[cfg(feature = "haptic")]
+use crate::trezorhal::haptic::{self, HapticEffect};
 use crate::{
+    strutil::TString,
     time::Duration,
     ui::{
         component::{
@@ -7,6 +10,8 @@ use crate::{
         display::{self, toif::Icon, Color, Font},
         event::TouchEvent,
         geometry::{Alignment2D, Insets, Offset, Point, Rect},
+        shape,
+        shape::Renderer,
     },
 };
 
@@ -19,22 +24,23 @@ pub enum ButtonMsg {
     LongPressed,
 }
 
-pub struct Button<T> {
+pub struct Button {
     area: Rect,
     touch_expand: Option<Insets>,
-    content: ButtonContent<T>,
+    content: ButtonContent,
     styles: ButtonStyleSheet,
     state: State,
     long_press: Option<Duration>,
     long_timer: Option<TimerToken>,
+    haptics: bool,
 }
 
-impl<T> Button<T> {
+impl Button {
     /// Offsets the baseline of the button text either up (negative) or down
     /// (positive).
     pub const BASELINE_OFFSET: i16 = -2;
 
-    pub const fn new(content: ButtonContent<T>) -> Self {
+    pub const fn new(content: ButtonContent) -> Self {
         Self {
             content,
             area: Rect::zero(),
@@ -43,10 +49,11 @@ impl<T> Button<T> {
             state: State::Initial,
             long_press: None,
             long_timer: None,
+            haptics: true,
         }
     }
 
-    pub const fn with_text(text: T) -> Self {
+    pub const fn with_text(text: TString<'static>) -> Self {
         Self::new(ButtonContent::Text(text))
     }
 
@@ -78,6 +85,11 @@ impl<T> Button<T> {
 
     pub fn with_long_press(mut self, duration: Duration) -> Self {
         self.long_press = Some(duration);
+        self
+    }
+
+    pub const fn without_haptics(mut self) -> Self {
+        self.haptics = false;
         self
     }
 
@@ -115,17 +127,14 @@ impl<T> Button<T> {
         matches!(self.state, State::Disabled)
     }
 
-    pub fn set_content(&mut self, ctx: &mut EventCtx, content: ButtonContent<T>)
-    where
-        T: PartialEq,
-    {
+    pub fn set_content(&mut self, ctx: &mut EventCtx, content: ButtonContent) {
         if self.content != content {
             self.content = content;
             ctx.request_paint();
         }
     }
 
-    pub fn content(&self) -> &ButtonContent<T> {
+    pub fn content(&self) -> &ButtonContent {
         &self.content
     }
 
@@ -187,26 +196,36 @@ impl<T> Button<T> {
         }
     }
 
-    pub fn paint_content(&self, style: &ButtonStyle)
-    where
-        T: AsRef<str>,
-    {
+    pub fn render_background<'s>(&self, target: &mut impl Renderer<'s>, style: &ButtonStyle) {
+        match &self.content {
+            ButtonContent::IconBlend(_, _, _) => {}
+            _ => shape::Bar::new(self.area)
+                .with_bg(style.button_color)
+                .with_fg(style.border_color)
+                .with_thickness(style.border_width)
+                .with_radius(style.border_radius as i16)
+                .render(target),
+        }
+    }
+
+    pub fn paint_content(&self, style: &ButtonStyle) {
         match &self.content {
             ButtonContent::Empty => {}
             ButtonContent::Text(text) => {
-                let text = text.as_ref();
-                let width = style.font.text_width(text);
+                let width = text.map(|c| style.font.text_width(c));
                 let height = style.font.text_height();
                 let start_of_baseline = self.area.center()
                     + Offset::new(-width / 2, height / 2)
                     + Offset::y(Self::BASELINE_OFFSET);
-                display::text_left(
-                    start_of_baseline,
-                    text,
-                    style.font,
-                    style.text_color,
-                    style.button_color,
-                );
+                text.map(|text| {
+                    display::text_left(
+                        start_of_baseline,
+                        text,
+                        style.font,
+                        style.text_color,
+                        style.button_color,
+                    );
+                });
             }
             ButtonContent::Icon(icon) => {
                 icon.draw(
@@ -227,12 +246,48 @@ impl<T> Button<T> {
             ),
         }
     }
+
+    pub fn render_content<'s>(&self, target: &mut impl Renderer<'s>, style: &ButtonStyle) {
+        match &self.content {
+            ButtonContent::Empty => {}
+            ButtonContent::Text(text) => {
+                let width = text.map(|c| style.font.text_width(c));
+                let height = style.font.text_height();
+                let start_of_baseline = self.area.center()
+                    + Offset::new(-width / 2, height / 2)
+                    + Offset::y(Self::BASELINE_OFFSET);
+                text.map(|text| {
+                    shape::Text::new(start_of_baseline, text)
+                        .with_font(style.font)
+                        .with_fg(style.text_color)
+                        .render(target);
+                });
+            }
+            ButtonContent::Icon(icon) => {
+                shape::ToifImage::new(self.area.center(), icon.toif)
+                    .with_align(Alignment2D::CENTER)
+                    .with_fg(style.text_color)
+                    .render(target);
+            }
+            ButtonContent::IconAndText(child) => {
+                child.render(target, self.area, self.style(), Self::BASELINE_OFFSET);
+            }
+            ButtonContent::IconBlend(bg, fg, offset) => {
+                shape::Bar::new(self.area)
+                    .with_bg(style.background_color)
+                    .render(target);
+                shape::ToifImage::new(self.area.top_left(), bg.toif)
+                    .with_fg(style.button_color)
+                    .render(target);
+                shape::ToifImage::new(self.area.top_left() + *offset, fg.toif)
+                    .with_fg(style.text_color)
+                    .render(target);
+            }
+        }
+    }
 }
 
-impl<T> Component for Button<T>
-where
-    T: AsRef<str>,
-{
+impl Component for Button {
     type Msg = ButtonMsg;
 
     fn place(&mut self, bounds: Rect) -> Rect {
@@ -256,6 +311,10 @@ where
                     _ => {
                         // Touch started in our area, transform to `Pressed` state.
                         if touch_area.contains(pos) {
+                            #[cfg(feature = "haptic")]
+                            if self.haptics {
+                                haptic::play(HapticEffect::ButtonPress);
+                            }
                             self.set(ctx, State::Pressed);
                             if let Some(duration) = self.long_press {
                                 self.long_timer = Some(ctx.request_timer(duration));
@@ -298,6 +357,10 @@ where
                 if self.long_timer == Some(token) {
                     self.long_timer = None;
                     if matches!(self.state, State::Pressed) {
+                        #[cfg(feature = "haptic")]
+                        if self.haptics {
+                            haptic::play(HapticEffect::ButtonPress);
+                        }
                         self.set(ctx, State::Initial);
                         return Some(ButtonMsg::LongPressed);
                     }
@@ -314,6 +377,12 @@ where
         self.paint_content(style);
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        let style = self.style();
+        self.render_background(target, style);
+        self.render_content(target, style);
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area);
@@ -321,18 +390,15 @@ where
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T> crate::trace::Trace for Button<T>
-where
-    T: AsRef<str>,
-{
+impl crate::trace::Trace for Button {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("Button");
         match &self.content {
             ButtonContent::Empty => {}
-            ButtonContent::Text(text) => t.string("text", text.as_ref()),
+            ButtonContent::Text(text) => t.string("text", *text),
             ButtonContent::Icon(_) => t.bool("icon", true),
             ButtonContent::IconAndText(content) => {
-                t.string("text", content.text);
+                t.string("text", content.text.into());
                 t.bool("icon", true);
             }
             ButtonContent::IconBlend(_, _, _) => t.bool("icon", true),
@@ -349,15 +415,15 @@ enum State {
 }
 
 #[derive(PartialEq, Eq)]
-pub enum ButtonContent<T> {
+pub enum ButtonContent {
     Empty,
-    Text(T),
+    Text(TString<'static>),
     Icon(Icon),
     IconAndText(IconText),
     IconBlend(Icon, Icon, Offset),
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct ButtonStyleSheet {
     pub normal: &'static ButtonStyle,
     pub active: &'static ButtonStyle,
@@ -375,19 +441,15 @@ pub struct ButtonStyle {
     pub border_width: i16,
 }
 
-impl<T> Button<T> {
+impl Button {
     pub fn cancel_confirm(
-        left: Button<T>,
-        right: Button<T>,
+        left: Button,
+        right: Button,
         left_is_small: bool,
     ) -> CancelConfirm<
-        T,
         impl Fn(ButtonMsg) -> Option<CancelConfirmMsg>,
         impl Fn(ButtonMsg) -> Option<CancelConfirmMsg>,
-    >
-    where
-        T: AsRef<str>,
-    {
+    > {
         let width = if left_is_small {
             theme::BUTTON_WIDTH
         } else {
@@ -406,21 +468,17 @@ impl<T> Button<T> {
     }
 
     pub fn cancel_confirm_text(
-        left: Option<T>,
-        right: Option<T>,
+        left: Option<TString<'static>>,
+        right: Option<TString<'static>>,
     ) -> CancelConfirm<
-        T,
         impl Fn(ButtonMsg) -> Option<CancelConfirmMsg>,
         impl Fn(ButtonMsg) -> Option<CancelConfirmMsg>,
-    >
-    where
-        T: AsRef<str>,
-    {
+    > {
         let left_is_small: bool;
 
         let left = if let Some(verb) = left {
-            left_is_small = verb.as_ref().len() <= 4;
-            if verb.as_ref() == "^" {
+            left_is_small = verb.len() <= 4;
+            if verb == "^".into() {
                 Button::with_icon(theme::ICON_UP)
             } else {
                 Button::with_text(verb)
@@ -438,17 +496,13 @@ impl<T> Button<T> {
     }
 
     pub fn cancel_info_confirm(
-        confirm: T,
-        info: T,
+        confirm: TString<'static>,
+        info: TString<'static>,
     ) -> CancelInfoConfirm<
-        T,
         impl Fn(ButtonMsg) -> Option<CancelInfoConfirmMsg>,
         impl Fn(ButtonMsg) -> Option<CancelInfoConfirmMsg>,
         impl Fn(ButtonMsg) -> Option<CancelInfoConfirmMsg>,
-    >
-    where
-        T: AsRef<str>,
-    {
+    > {
         let right = Button::with_text(confirm)
             .styled(theme::button_confirm())
             .map(|msg| {
@@ -473,16 +527,12 @@ impl<T> Button<T> {
     }
 
     pub fn select_word(
-        words: [T; 3],
+        words: [TString<'static>; 3],
     ) -> CancelInfoConfirm<
-        T,
         impl Fn(ButtonMsg) -> Option<SelectWordMsg>,
         impl Fn(ButtonMsg) -> Option<SelectWordMsg>,
         impl Fn(ButtonMsg) -> Option<SelectWordMsg>,
-    >
-    where
-        T: AsRef<str>,
-    {
+    > {
         let btn = move |i, word| {
             Button::with_text(word)
                 .styled(theme::button_pin())
@@ -515,11 +565,10 @@ pub enum CancelConfirmMsg {
     Confirmed,
 }
 
-type CancelInfoConfirm<T, F0, F1, F2> = FixedHeightBar<
-    Split<MsgMap<Button<T>, F0>, Split<MsgMap<Button<T>, F1>, MsgMap<Button<T>, F2>>>,
->;
+type CancelInfoConfirm<F0, F1, F2> =
+    FixedHeightBar<Split<MsgMap<Button, F0>, Split<MsgMap<Button, F1>, MsgMap<Button, F2>>>>;
 
-type CancelConfirm<T, F0, F1> = FixedHeightBar<Split<MsgMap<Button<T>, F0>, MsgMap<Button<T>, F1>>>;
+type CancelConfirm<F0, F1> = FixedHeightBar<Split<MsgMap<Button, F0>, MsgMap<Button, F1>>>;
 
 #[derive(Clone, Copy)]
 pub enum CancelInfoConfirmMsg {
@@ -591,6 +640,54 @@ impl IconText {
                 style.text_color,
                 style.button_color,
             );
+        }
+    }
+
+    pub fn render<'s>(
+        &self,
+        target: &mut impl Renderer<'s>,
+        area: Rect,
+        style: &ButtonStyle,
+        baseline_offset: i16,
+    ) {
+        let width = style.font.text_width(self.text);
+        let height = style.font.text_height();
+
+        let mut use_icon = false;
+        let mut use_text = false;
+
+        let mut icon_pos = Point::new(
+            area.top_left().x + ((Self::ICON_SPACE + Self::ICON_MARGIN) / 2),
+            area.center().y,
+        );
+        let mut text_pos =
+            area.center() + Offset::new(-width / 2, height / 2) + Offset::y(baseline_offset);
+
+        if area.width() > (Self::ICON_SPACE + Self::TEXT_MARGIN + width) {
+            //display both icon and text
+            text_pos = Point::new(area.top_left().x + Self::ICON_SPACE, text_pos.y);
+            use_text = true;
+            use_icon = true;
+        } else if area.width() > (width + Self::TEXT_MARGIN) {
+            use_text = true;
+        } else {
+            //if we can't fit the text, retreat to centering the icon
+            icon_pos = area.center();
+            use_icon = true;
+        }
+
+        if use_text {
+            shape::Text::new(text_pos, self.text)
+                .with_font(style.font)
+                .with_fg(style.text_color)
+                .render(target);
+        }
+
+        if use_icon {
+            shape::ToifImage::new(icon_pos, self.icon.toif)
+                .with_align(Alignment2D::CENTER)
+                .with_fg(style.text_color)
+                .render(target);
         }
     }
 }

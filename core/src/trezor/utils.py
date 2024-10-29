@@ -5,20 +5,29 @@ from trezorutils import (  # noqa: F401
     EMULATOR,
     INTERNAL_MODEL,
     MODEL,
+    MODEL_FULL_NAME,
+    MODEL_USB_MANUFACTURER,
+    MODEL_USB_PRODUCT,
     SCM_REVISION,
+    UI_LAYOUT,
     USE_BACKLIGHT,
+    USE_HAPTIC,
+    USE_OPTIGA,
     USE_SD_CARD,
-    VERSION_MAJOR,
-    VERSION_MINOR,
-    VERSION_PATCH,
+    USE_THP,
+    VERSION,
+    bootloader_locked,
+    check_firmware_header,
     consteq,
     firmware_hash,
     firmware_vendor,
     halt,
     memcpy,
     reboot_to_bootloader,
+    sd_hotswap_enabled,
     unit_btconly,
     unit_color,
+    unit_packaging,
 )
 from typing import TYPE_CHECKING
 
@@ -137,24 +146,19 @@ def chunks(items: Chunkable, size: int) -> Iterator[Chunkable]:
 if TYPE_CHECKING:
 
     class HashContext(Protocol):
-        def update(self, __buf: bytes) -> None:
-            ...
+        def update(self, __buf: bytes) -> None: ...
 
-        def digest(self) -> bytes:
-            ...
+        def digest(self) -> bytes: ...
 
     class HashContextInitable(HashContext, Protocol):
         def __init__(  # pylint: disable=super-init-not-called
             self, __data: bytes | None = None
-        ) -> None:
-            ...
+        ) -> None: ...
 
     class Writer(Protocol):
-        def append(self, __b: int) -> None:
-            ...
+        def append(self, __b: int) -> None: ...
 
-        def extend(self, __buf: bytes) -> None:
-            ...
+        def extend(self, __buf: bytes) -> None: ...
 
 
 if False:  # noqa
@@ -296,14 +300,14 @@ class BufferReader:
         return byte
 
 
-def obj_eq(self: Any, __o: Any) -> bool:
+def obj_eq(__self: Any, __o: Any) -> bool:
     """
     Compares object contents.
     """
-    if self.__class__ is not __o.__class__:
+    if __self.__class__ is not __o.__class__:
         return False
-    assert not hasattr(self, "__slots__")
-    return self.__dict__ == __o.__dict__
+    assert not hasattr(__self, "__slots__")
+    return __self.__dict__ == __o.__dict__
 
 
 def obj_repr(self: Any) -> str:
@@ -357,11 +361,11 @@ if __debug__:
 
         yield line_start + msg.MESSAGE_NAME + " {"
         for key, val in msg_dict.items():
-            if type(val) == type(msg):
+            if type(val) is type(msg):
                 sublines = dump_protobuf_lines(val, line_start=key + ": ")
                 for subline in sublines:
                     yield "    " + subline
-            elif val and isinstance(val, list) and type(val[0]) == type(msg):
+            elif val and isinstance(val, list) and type(val[0]) is type(msg):
                 # non-empty list of protobuf messages
                 yield f"    {key}: ["
                 for subval in val:

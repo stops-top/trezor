@@ -1,23 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
 RETURN=0
 
 EXCEPTIONS=()
 EXCEPTIONS+=( "decred" )  # "decred" figures in field names used by the bitcoin app
 EXCEPTIONS+=( "omni" )  # OMNI is part of the bitcoin app
-    # BIP39 or SLIP39 words that have "dash", "nem", or "flo" in them
-EXCEPTIONS+=( "cinema" "dash" "enemy" "float" "flock" "flower" "floor" "floral" )
-EXCEPTIONS+=( "mnemonic" )  # has NEM in it
-EXCEPTIONS+=( "workflow" "overflow" )  # has Flo in it
-EXCEPTIONS+=( "SyntaxError" )  # has Axe in it
-EXCEPTIONS+=( "DKDNEM" )  # has NEM in it, some sort of weird coincidence
+EXCEPTIONS+=( "derive_cardano" )  # field name in Initialize message
+# BIP39 or SLIP39 words that have "dash" and "ripple" in them
+EXCEPTIONS+=( "dash" "ripple" )
 
 GREP_ARGS=()
 for exception in "${EXCEPTIONS[@]}"; do
     GREP_ARGS+=(-e $exception)
 done
 
-# dump all coins except the first 3 (Bitcoin, Testnet, Regtest)
-ALTCOINS=$(./common/tools/cointool.py dump -l -p -t -d trezor1 -d trezor2 | grep '"name"' | cut -d '"' -f 4 | tail -n +4)
+# dump all coins except the first 3 (Bitcoin, Testnet, Regtest), exclude names with less than 4 characters
+ALTCOINS=$(./common/tools/cointool.py dump -l -p -t | grep '"name"' | cut -d '"' -f 4 | tail -n +4 | awk 'length($0)>3')
 # split on newlines only
 OLDIFS=$IFS
 IFS="

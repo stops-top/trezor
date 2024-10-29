@@ -47,6 +47,7 @@ def _transform_vendor_trust(data: bytes) -> bytes:
 
 
 class VendorTrust(Struct):
+    _dont_provide_secret: bool
     allow_run_with_secret: bool
     show_vendor_string: bool
     require_user_click: bool
@@ -57,7 +58,9 @@ class VendorTrust(Struct):
 
     SUBCON = c.Transformed(
         c.BitStruct(
-            "_reserved" / c.Default(c.BitsInteger(8), 0),
+            "_reserved" / c.Default(c.BitsInteger(7), 0b1111111),
+            "_dont_provide_secret"
+            / c.Default(c.Flag, lambda this: not this.allow_run_with_secret),
             "allow_run_with_secret" / c.Flag,
             "show_vendor_string" / c.Flag,
             "require_user_click" / c.Flag,
@@ -69,6 +72,14 @@ class VendorTrust(Struct):
         _transform_vendor_trust,
         2,
     )
+
+    def is_full_trust(self) -> bool:
+        return (
+            not self.show_vendor_string
+            and not self.require_user_click
+            and not self.red_background
+            and self.delay == 0
+        )
 
 
 class VendorHeader(Struct):
@@ -113,10 +124,11 @@ class VendorHeader(Struct):
     # fmt: on
 
     def digest(self) -> bytes:
+        hash_function = Model.from_hw_model(self.hw_model).hash_params().hash_function
         cpy = copy(self)
         cpy.sigmask = 0
         cpy.signature = b"\x00" * 64
-        return hashlib.blake2s(cpy.build()).digest()
+        return hash_function(cpy.build()).digest()
 
     def vhash(self) -> bytes:
         h = hashlib.blake2s()

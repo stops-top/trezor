@@ -21,18 +21,27 @@
 
 #include TREZOR_BOARD
 #include "board_capabilities.h"
+#include "buffers.h"
 #include "common.h"
 #include "compiler_traits.h"
 #include "display.h"
+#include "display_draw.h"
+#include "fault_handlers.h"
 #include "flash.h"
 #include "image.h"
 #include "model.h"
+#include "mpu.h"
 #include "rng.h"
+#include "terminal.h"
+
 #ifdef USE_SD_CARD
 #include "sdcard.h"
 #endif
 #ifdef USE_SDRAM
 #include "sdram.h"
+#endif
+#ifdef USE_HASH_PROCESSOR
+#include "hash_processor.h"
 #endif
 
 #include "lowlevel.h"
@@ -40,6 +49,12 @@
 #include "version.h"
 
 #include "memzero.h"
+
+#ifdef STM32U5
+#include "secret.h"
+#include "tamper.h"
+#include "trustzone.h"
+#endif
 
 const uint8_t BOARDLOADER_KEY_M = 2;
 const uint8_t BOARDLOADER_KEY_N = 3;
@@ -53,7 +68,47 @@ static const uint8_t * const BOARDLOADER_KEYS[] = {
 #endif
 };
 
-struct BoardCapabilities capablities
+#ifdef STM32U5
+uint8_t get_bootloader_min_version(void) {
+  const uint8_t *counter_addr =
+      flash_area_get_address(&SECRET_AREA, SECRET_MONOTONIC_COUNTER_OFFSET,
+                             SECRET_MONOTONIC_COUNTER_LEN);
+
+  ensure((counter_addr != NULL) * sectrue, "counter_addr is NULL");
+
+  int counter = 0;
+
+  for (int i = 0; i < SECRET_MONOTONIC_COUNTER_LEN / 16; i++) {
+    secbool not_cleared = sectrue;
+    for (int j = 0; j < 16; j++) {
+      if (counter_addr[i * 16 + j] != 0xFF) {
+        not_cleared = secfalse;
+        break;
+      }
+    }
+
+    if (not_cleared != sectrue) {
+      counter++;
+    } else {
+      break;
+    }
+  }
+
+  return counter;
+}
+
+void write_bootloader_min_version(uint8_t version) {
+  if (version > get_bootloader_min_version()) {
+    for (int i = 0; i < version; i++) {
+      uint32_t data[4] = {0};
+      secret_write((uint8_t *)data, SECRET_MONOTONIC_COUNTER_OFFSET + i * 16,
+                   16);
+    }
+  }
+}
+#endif
+
+struct BoardCapabilities capabilities
     __attribute__((section(".capabilities_section"))) = {
         .header = CAPABILITIES_HEADER,
         .model_tag = TAG_MODEL_NAME,
@@ -69,8 +124,7 @@ struct BoardCapabilities capablities
         .terminator_length = 0};
 
 // we use SRAM as SD card read buffer (because DMA can't access the CCMRAM)
-extern uint32_t sram_start[];
-#define sdcard_buf sram_start
+BUFFER_SECTION uint32_t sdcard_buf[BOOTLOADER_IMAGE_MAXSIZE / sizeof(uint32_t)];
 
 #if defined USE_SD_CARD
 static uint32_t check_sdcard(void) {
@@ -86,8 +140,8 @@ static uint32_t check_sdcard(void) {
 
   memzero(sdcard_buf, IMAGE_HEADER_SIZE);
 
-  const secbool read_status =
-      sdcard_read_blocks(sdcard_buf, 0, IMAGE_HEADER_SIZE / SDCARD_BLOCK_SIZE);
+  const secbool read_status = sdcard_read_blocks(
+      sdcard_buf, 0, BOOTLOADER_IMAGE_MAXSIZE / SDCARD_BLOCK_SIZE);
 
   sdcard_power_off();
 
@@ -110,69 +164,79 @@ static uint32_t check_sdcard(void) {
       return 0;
     }
 
+    _Static_assert(IMAGE_CHUNK_SIZE >= BOOTLOADER_IMAGE_MAXSIZE,
+                   "BOOTLOADER IMAGE MAXSIZE too large for IMAGE_CHUNK_SIZE");
+
+    if (sectrue != (check_single_hash(
+                       hdr->hashes, ((const uint8_t *)sdcard_buf) + hdr->hdrlen,
+                       hdr->codelen))) {
+      return 0;
+    }
+
+    for (int i = IMAGE_HASH_DIGEST_LENGTH; i < sizeof(hdr->hashes); i++) {
+      if (hdr->hashes[i] != 0) {
+        return 0;
+      }
+    }
+
+#ifdef STM32U5
+    if (hdr->monotonic < get_bootloader_min_version()) {
+      return 0;
+    }
+#endif
+
     return hdr->codelen;
   }
 
   return 0;
 }
 
-static void progress_callback(int pos, int len) { display_printf("."); }
+static void progress_callback(int pos, int len) { term_printf("."); }
 
 static secbool copy_sdcard(void) {
   display_backlight(255);
 
-  display_printf("Trezor Boardloader\n");
-  display_printf("==================\n\n");
+  term_printf("Trezor Boardloader\n");
+  term_printf("==================\n\n");
 
-  display_printf("bootloader found on the SD card\n\n");
-  display_printf("applying bootloader in 10 seconds\n\n");
-  display_printf("unplug now if you want to abort\n\n");
+  term_printf("bootloader found on the SD card\n\n");
+  term_printf("applying bootloader in 10 seconds\n\n");
+  term_printf("unplug now if you want to abort\n\n");
 
   uint32_t codelen;
 
   for (int i = 10; i >= 0; i--) {
-    display_printf("%d ", i);
+    term_printf("%d ", i);
     hal_delay(1000);
     codelen = check_sdcard();
     if (0 == codelen) {
-      display_printf("\n\nno SD card, aborting\n");
+      term_printf("\n\nno SD card, aborting\n");
       return secfalse;
     }
   }
 
-  display_printf("\n\nerasing flash:\n\n");
+  term_printf("\n\nerasing flash:\n\n");
 
   // erase all flash (except boardloader)
   if (sectrue != flash_area_erase(&ALL_WIPE_AREA, progress_callback)) {
-    display_printf(" failed\n");
+    term_printf(" failed\n");
     return secfalse;
   }
-  display_printf(" done\n\n");
+  term_printf(" done\n\n");
 
   ensure(flash_unlock_write(), NULL);
 
   // copy bootloader from SD card to Flash
-  display_printf("copying new bootloader from SD card\n\n");
+  term_printf("copying new bootloader from SD card\n\n");
 
-  ensure(sdcard_power_on(), NULL);
+  ensure(flash_area_write_data(&BOOTLOADER_AREA, 0, sdcard_buf,
+                               IMAGE_HEADER_SIZE + codelen),
+         NULL);
 
-  memzero(sdcard_buf, SDCARD_BLOCK_SIZE);
-
-  for (int i = 0; i < (IMAGE_HEADER_SIZE + codelen) / SDCARD_BLOCK_SIZE; i++) {
-    ensure(sdcard_read_blocks(sdcard_buf, i, 1), NULL);
-    for (int j = 0; j < SDCARD_BLOCK_SIZE / sizeof(uint32_t); j++) {
-      ensure(flash_area_write_word(&BOOTLOADER_AREA,
-                                   i * SDCARD_BLOCK_SIZE + j * sizeof(uint32_t),
-                                   sdcard_buf[j]),
-             NULL);
-    }
-  }
-
-  sdcard_power_off();
   ensure(flash_lock_write(), NULL);
 
-  display_printf("\ndone\n\n");
-  display_printf("Unplug the device and remove the SD card\n");
+  term_printf("\ndone\n\n");
+  term_printf("Unplug the device and remove the SD card\n");
 
   return sectrue;
 }
@@ -193,17 +257,55 @@ int main(void) {
     return 2;
   }
 
+#ifdef STM32U5
+  tamper_init();
+
+  trustzone_init_boardloader();
+
+  secret_ensure_initialized();
+#endif
+
+#ifdef STM32F4
   clear_otg_hs_memory();
+#endif
+
+  mpu_config_boardloader();
+
+  fault_handlers_init();
 
 #ifdef USE_SDRAM
   sdram_init();
 #endif
 
+#ifdef USE_HASH_PROCESSOR
+  hash_processor_init();
+#endif
+
   display_init();
   display_clear();
+  display_refresh();
 
 #if defined USE_SD_CARD
   sdcard_init();
+
+#ifdef STM32U5
+  // If the bootloader is being updated from SD card, we need to preserve the
+  // monotonic counter from the old bootloader. This is in case that the old
+  // bootloader did not have the chance yet to write its monotonic counter to
+  // the secret area - which normally happens later in the flow.
+  const image_header *old_hdr = read_image_header(
+      (const uint8_t *)BOOTLOADER_START, BOOTLOADER_IMAGE_MAGIC,
+      flash_area_get_size(&BOOTLOADER_AREA));
+
+  if ((old_hdr != NULL) &&
+      (sectrue == check_image_header_sig(old_hdr, BOARDLOADER_KEY_M,
+                                         BOARDLOADER_KEY_N,
+                                         BOARDLOADER_KEYS)) &&
+      (sectrue ==
+       check_image_contents(old_hdr, IMAGE_HEADER_SIZE, &BOOTLOADER_AREA))) {
+    write_bootloader_min_version(old_hdr->monotonic);
+  }
+#endif
 
   if (check_sdcard()) {
     return copy_sdcard() == sectrue ? 0 : 3;
@@ -224,8 +326,20 @@ int main(void) {
   ensure(check_image_contents(hdr, IMAGE_HEADER_SIZE, &BOOTLOADER_AREA),
          "invalid bootloader hash");
 
+#ifdef STM32U5
+  uint8_t bld_min_version = get_bootloader_min_version();
+  ensure((hdr->monotonic >= bld_min_version) * sectrue,
+         "BOOTLOADER DOWNGRADED");
+  // Write the bootloader version to the secret area.
+  // This includes the version of bootloader potentially updated from SD card.
+  write_bootloader_min_version(hdr->monotonic);
+#endif
+
   ensure_compatible_settings();
 
+  mpu_config_off();
+
+  // g_boot_command is preserved on STM32U5
   jump_to(BOOTLOADER_START + IMAGE_HEADER_SIZE);
 
   return 0;

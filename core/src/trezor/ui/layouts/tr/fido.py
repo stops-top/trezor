@@ -14,7 +14,7 @@ async def confirm_fido(
     """Webauthn confirmation for one or more credentials."""
     confirm = RustLayout(
         trezorui2.confirm_fido(  # type: ignore [Argument missing for parameter "icon_name"]
-            title=header.upper(),
+            title=header,
             app_name=app_name,
             accounts=accounts,
         )
@@ -38,13 +38,15 @@ async def confirm_fido(
 
 
 async def confirm_fido_reset() -> bool:
+    from trezor import TR
+
     confirm = RustLayout(
         trezorui2.confirm_action(
-            title="FIDO2 RESET",
-            description="Do you really want to erase all credentials?",
+            title=TR.fido__title_reset,
+            description=TR.fido__wanna_erase_credentials,
             action=None,
             verb_cancel="",
-            verb="CONFIRM",
+            verb=TR.buttons__confirm,
         )
     )
     return (await confirm) is trezorui2.CONFIRMED

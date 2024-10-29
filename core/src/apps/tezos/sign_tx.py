@@ -71,12 +71,16 @@ async def sign_tx(msg: TezosSignTx, keychain: Keychain) -> TezosSignedTx:
             # operation to transfer tokens from a smart contract to an implicit account or a smart contract
             elif transfer is not None:
                 to = _get_address_from_contract(transfer.destination)
-                await layout.require_confirm_tx(to, transfer.amount)
+                await layout.require_confirm_tx(
+                    to, transfer.amount, chunkify=bool(msg.chunkify)
+                )
                 await layout.require_confirm_fee(transfer.amount, fee)
         else:
             # transactions from an implicit account
             to = _get_address_from_contract(transaction.destination)
-            await layout.require_confirm_tx(to, transaction.amount)
+            await layout.require_confirm_tx(
+                to, transaction.amount, chunkify=bool(msg.chunkify)
+            )
             await layout.require_confirm_fee(transaction.amount, fee)
 
     elif origination is not None:
@@ -313,10 +317,9 @@ def _get_operation_bytes(w: Writer, msg: TezosSignTx) -> None:
 
 def _encode_common(
     w: Writer,
-    operation: TezosDelegationOp
-    | TezosOriginationOp
-    | TezosTransactionOp
-    | TezosRevealOp,
+    operation: (
+        TezosDelegationOp | TezosOriginationOp | TezosTransactionOp | TezosRevealOp
+    ),
     str_operation: str,
 ) -> None:
     operation_tags = {

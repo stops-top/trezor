@@ -14,31 +14,26 @@ from __future__ import annotations
 import time
 from typing import Callable, Generator
 
-from trezorlib import messages
+from trezorlib import messages, models
 from trezorlib.debuglink import DebugLink, LayoutContent
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.debuglink import multipage_content
 
 from . import buttons
+from . import translations as TR
 from .common import (
     BRGeneratorType,
     check_pin_backoff_time,
+    click_info_button_mercury,
     click_info_button_tt,
     click_through,
+    get_text_possible_pagination,
     read_and_confirm_mnemonic,
+    swipe_if_necessary,
 )
-from .input_flows_helpers import BackupFlow, PinFlow, RecoveryFlow
+from .input_flows_helpers import BackupFlow, EthereumFlow, PinFlow, RecoveryFlow
 
 B = messages.ButtonRequestType
-
-
-def swipe_if_necessary(debug: DebugLink, br_code: B | None = None) -> BRGeneratorType:
-    br = yield
-    if br_code is not None:
-        assert br.code == br_code
-    if br.pages is not None:
-        for _ in range(br.pages - 1):
-            debug.swipe_up()
 
 
 class InputFlowBase:
@@ -48,9 +43,10 @@ class InputFlowBase:
         self.PIN = PinFlow(self.client)
         self.REC = RecoveryFlow(self.client)
         self.BAK = BackupFlow(self.client)
+        self.ETH = EthereumFlow(self.client)
 
-    def model(self) -> str | None:
-        return self.client.features.model
+    def model(self) -> str | models.TrezorModel:
+        return self.client.model
 
     def get(self) -> Callable[[], BRGeneratorType]:
         self.client.watch_layout(True)
@@ -58,10 +54,12 @@ class InputFlowBase:
         # There could be one common input flow for all models
         if hasattr(self, "input_flow_common"):
             return getattr(self, "input_flow_common")
-        elif self.model() == "T":
+        elif self.model() is models.T2T1:
             return self.input_flow_tt
-        elif self.model() == "R":
+        elif self.model() is models.T2B1:
             return self.input_flow_tr
+        elif self.model() is models.T3T1:
+            return self.input_flow_t3t1
         else:
             raise ValueError("Unknown model")
 
@@ -71,6 +69,10 @@ class InputFlowBase:
 
     def input_flow_tr(self) -> BRGeneratorType:
         """Special for TR"""
+        raise NotImplementedError
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        """Special for T3T1"""
         raise NotImplementedError
 
     def text_content(self) -> str:
@@ -96,7 +98,7 @@ class InputFlowSetupDevicePINWIpeCode(InputFlowBase):
         yield  # do you want to set/change the wipe code?
         self.debug.press_yes()
 
-        if self.debug.model == "R":
+        if self.model() is models.T2B1:
             yield from swipe_if_necessary(self.debug)  # wipe code info
             self.debug.press_yes()
 
@@ -125,7 +127,7 @@ class InputFlowNewCodeMismatch(InputFlowBase):
         yield  # do you want to set/change the pin/wipe code?
         self.debug.press_yes()
 
-        if self.debug.model == "R":
+        if self.model() is models.T2B1:
             yield from swipe_if_necessary(self.debug)  # code info
             self.debug.press_yes()
 
@@ -235,6 +237,11 @@ class InputFlowSignMessagePagination(InputFlowBase):
         yield
         self.debug.press_yes()
 
+        # press info
+        yield
+        self.debug.press_right()
+
+        # paginate through the whole message
         br = yield
         # TODO: try load the message_read the same way as in model T
         if br.pages is not None:
@@ -242,6 +249,71 @@ class InputFlowSignMessagePagination(InputFlowBase):
                 if i < br.pages - 1:
                     self.debug.swipe_up()
         self.debug.press_yes()
+
+        # confirm message
+        yield
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        # collect screen contents into `message_read`.
+        # Using a helper debuglink function to assemble the final text.
+        layouts: list[LayoutContent] = []
+
+        br = yield  # confirm address
+        self.debug.wait_layout()
+        self.debug.press_yes()
+
+        br = yield
+        # assert br.pages is not None
+        for i in range(br.pages or 1):
+            layout = self.debug.wait_layout()
+            layouts.append(layout)
+
+            if br.pages and i < br.pages - 1:
+                self.debug.swipe_up()
+
+        self.message_read = multipage_content(layouts)
+
+        self.debug.press_yes()
+
+
+class InputFlowSignMessageInfo(InputFlowBase):
+    def __init__(self, client: Client):
+        super().__init__(client)
+
+    def input_flow_tt(self) -> BRGeneratorType:
+        yield
+        # show address/message info
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.press_no(wait=True)
+        self.debug.synchronize_at("IconDialog")
+        # address mismatch?
+        self.debug.press_no()
+        yield
+        self.debug.press_yes()
+        yield
+        self.debug.press_no()
+        yield
+        self.debug.press_no(wait=True)
+        self.debug.press_yes(wait=True)
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield
+        # show address/message info
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.press_no(wait=True)
+        self.debug.synchronize_at("IconDialog")
+        # address mismatch?
+        self.debug.press_no()
+        yield
+        self.debug.press_yes()
+        yield
+        self.debug.press_no()
+        yield
+        self.debug.press_no(wait=True)
+        self.debug.press_yes(wait=True)
 
 
 class InputFlowShowAddressQRCode(InputFlowBase):
@@ -252,7 +324,7 @@ class InputFlowShowAddressQRCode(InputFlowBase):
         yield
         self.debug.click(buttons.CORNER_BUTTON, wait=True)
         # synchronize; TODO get rid of this once we have single-global-layout
-        self.debug.synchronize_at("HorizontalPage")
+        self.debug.synchronize_at("SimplePage")
 
         self.debug.swipe_left(wait=True)
         self.debug.swipe_right(wait=True)
@@ -263,7 +335,15 @@ class InputFlowShowAddressQRCode(InputFlowBase):
         self.debug.press_yes()
 
     def input_flow_tr(self) -> BRGeneratorType:
-        yield
+        # Find out the page-length of the address
+        br = yield
+        if br.pages is not None:
+            address_swipes = br.pages - 1
+        else:
+            address_swipes = 0
+        for _ in range(address_swipes):
+            self.debug.press_right()
+
         # Go into details
         self.debug.press_right()
         # Go through details and back
@@ -271,7 +351,38 @@ class InputFlowShowAddressQRCode(InputFlowBase):
         self.debug.press_left()
         self.debug.press_left()
         # Confirm
+        for _ in range(address_swipes):
+            self.debug.press_right()
         self.debug.press_middle()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # synchronize; TODO get rid of this once we have single-global-layout
+        self.debug.synchronize_at("VerticalMenu")
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[0], wait=True)
+        self.debug.synchronize_at("Qr")
+        # qr code
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[1], wait=True)
+        # address details
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[2], wait=True)
+        # cancel
+        self.debug.swipe_up(wait=True)
+        # really cancel
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        layout = self.debug.click(buttons.CORNER_BUTTON, wait=True)
+
+        while "PromptScreen" not in layout.all_components():
+            layout = self.debug.swipe_up(wait=True)
+        self.debug.synchronize_at("PromptScreen")
+        # tap to confirm
+        self.debug.click(buttons.TAP_TO_CONFIRM)
 
 
 class InputFlowShowAddressQRCodeCancel(InputFlowBase):
@@ -282,7 +393,7 @@ class InputFlowShowAddressQRCodeCancel(InputFlowBase):
         yield
         self.debug.click(buttons.CORNER_BUTTON, wait=True)
         # synchronize; TODO get rid of this once we have single-global-layout
-        self.debug.synchronize_at("HorizontalPage")
+        self.debug.synchronize_at("SimplePage")
 
         self.debug.swipe_left(wait=True)
         self.debug.click(buttons.CORNER_BUTTON, wait=True)
@@ -298,9 +409,33 @@ class InputFlowShowAddressQRCodeCancel(InputFlowBase):
         self.debug.press_left()
         self.debug.press_left()
         # Cancel
-        self.debug.press_left()
+        self.debug.press_left(wait=True)
         # Confirm address mismatch
+        # Clicking right twice, as some languages can have two pages
         self.debug.press_right()
+        self.debug.press_right()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # synchronize; TODO get rid of this once we have single-global-layout
+        self.debug.synchronize_at("VerticalMenu")
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[0], wait=True)
+        self.debug.synchronize_at("Qr")
+        # qr code
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[1], wait=True)
+        # address details
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[2], wait=True)
+        # cancel
+        self.debug.swipe_up(wait=True)
+        self.debug.synchronize_at("PromptScreen")
+        # really cancel
+        self.debug.click(buttons.TAP_TO_CONFIRM, wait=True)
 
 
 class InputFlowShowMultisigXPUBs(InputFlowBase):
@@ -311,9 +446,13 @@ class InputFlowShowMultisigXPUBs(InputFlowBase):
         self.index = index
 
     def input_flow_tt(self) -> BRGeneratorType:
+        yield  # multisig address warning
+        self.debug.press_yes()
+
         yield  # show address
         layout = self.debug.wait_layout()
-        assert "RECEIVE ADDRESS\n(MULTISIG)" == layout.title()
+        TR.assert_in(layout.title(), "address__title_receive_address")
+        assert "(MULTISIG)" in layout.title()
         assert layout.text_content().replace(" ", "") == self.address
 
         self.debug.click(buttons.CORNER_BUTTON)
@@ -322,15 +461,13 @@ class InputFlowShowMultisigXPUBs(InputFlowBase):
         layout = self.debug.swipe_left(wait=True)
         # address details
         assert "Multisig 2 of 3" in layout.screen_content()
-        assert "Derivation path:" in layout.screen_content()
+        TR.assert_in(layout.screen_content(), "address_details__derivation_path_colon")
 
         # Three xpub pages with the same testing logic
         for xpub_num in range(3):
-            expected_title = f"MULTISIG XPUB #{xpub_num + 1}\n" + (
-                "(YOURS)" if self.index == xpub_num else "(COSIGNER)"
-            )
+            expected_title = f"MULTISIG XPUB #{xpub_num + 1}"
             layout = self.debug.swipe_left(wait=True)
-            assert expected_title == layout.title()
+            assert expected_title in layout.title()
             content = layout.text_content().replace(" ", "")
             assert self.xpubs[xpub_num] in content
 
@@ -343,9 +480,13 @@ class InputFlowShowMultisigXPUBs(InputFlowBase):
         self.debug.press_yes()
 
     def input_flow_tr(self) -> BRGeneratorType:
+        yield  # multisig address warning
+        self.debug.press_middle()
+
         yield  # show address
         layout = self.debug.wait_layout()
-        assert "RECEIVE ADDRESS (MULTISIG)" in layout.title()
+        TR.assert_in(layout.title(), "address__title_receive_address")
+        assert "(MULTISIG)" in layout.title()
         assert layout.text_content().replace(" ", "") == self.address
 
         self.debug.press_right()
@@ -358,9 +499,7 @@ class InputFlowShowMultisigXPUBs(InputFlowBase):
 
         # Three xpub pages with the same testing logic
         for xpub_num in range(3):
-            expected_title = f"MULTISIG XPUB #{xpub_num + 1} " + (
-                "(YOURS)" if self.index == xpub_num else "(COSIGNER)"
-            )
+            expected_title = f"MULTISIG XPUB #{xpub_num + 1}"
             layout = self.debug.press_right(wait=True)
             assert expected_title in layout.title()
             xpub_part_1 = layout.text_content().replace(" ", "")
@@ -379,6 +518,167 @@ class InputFlowShowMultisigXPUBs(InputFlowBase):
         self.debug.press_left()
         # show address
         self.debug.press_middle()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield  # multisig address warning
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.synchronize_at("VerticalMenu")
+        self.debug.click(buttons.VERTICAL_MENU[1])
+
+        yield  # show address
+        layout = self.debug.wait_layout()
+        TR.assert_in(layout.title(), "address__title_receive_address")
+        assert layout.text_content().replace(" ", "") == self.address
+
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        assert "VerticalMenu" in self.all_components()
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[0], wait=True)
+        self.debug.synchronize_at("Qr")
+        # qr code
+        assert "Qr" in self.all_components()
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        assert "VerticalMenu" in self.all_components()
+        self.debug.click(buttons.VERTICAL_MENU[1], wait=True)
+        layout = self.debug.synchronize_at("AddressDetails")
+        # address details
+        assert "Multisig 2 of 3" in layout.screen_content()
+        TR.assert_in(layout.screen_content(), "address_details__derivation_path")
+
+        # three xpub pages with the same testing logic
+        for _xpub_num in range(3):
+            layout = self.debug.swipe_left(wait=True)
+            layout = self.debug.swipe_left(wait=True)
+
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        layout = self.debug.synchronize_at("VerticalMenu")
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[2], wait=True)
+        # cancel
+        self.debug.swipe_up(wait=True)
+        # really cancel
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        layout = self.debug.synchronize_at("VerticalMenu")
+        # menu
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        layout = self.debug.synchronize_at("Paragraphs")
+        # address
+        while "PromptScreen" not in layout.all_components():
+            layout = self.debug.swipe_up(wait=True)
+        self.debug.synchronize_at("PromptScreen")
+        # tap to confirm
+        self.debug.press_yes()
+
+
+class InputFlowShowXpubQRCode(InputFlowBase):
+    def __init__(self, client: Client, passphrase: bool = False):
+        super().__init__(client)
+        self.passphrase = passphrase
+
+    def input_flow_tt(self) -> BRGeneratorType:
+        if self.passphrase:
+            yield
+            self.debug.press_yes()
+            yield
+            self.debug.press_yes()
+
+        br = yield
+        layout = self.debug.wait_layout()
+        if "coinjoin" in layout.title().lower() or br.code == B.UnknownDerivationPath:
+            self.debug.press_yes()
+            br = yield
+
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # synchronize; TODO get rid of this once we have single-global-layout
+        self.debug.synchronize_at("SimplePage")
+
+        self.debug.swipe_left(wait=True)
+        self.debug.swipe_right(wait=True)
+        self.debug.swipe_left(wait=True)
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.press_no(wait=True)
+        self.debug.press_no(wait=True)
+        for _ in range(br.pages - 1):
+            self.debug.swipe_up(wait=True)
+        self.debug.press_yes()
+
+    def input_flow_tr(self) -> BRGeneratorType:
+        if self.passphrase:
+            yield
+            self.debug.press_right()
+            yield
+            self.debug.press_right()
+
+        br = yield
+        layout = self.debug.wait_layout()
+        if "coinjoin" in layout.title().lower() or br.code == B.UnknownDerivationPath:
+            self.debug.press_yes()
+            br = yield
+
+        # Go into details
+        self.debug.press_right(wait=True)
+        # Go through details and back
+        self.debug.press_right(wait=True)
+        self.debug.press_right(wait=True)
+        self.debug.press_right(wait=True)
+        self.debug.press_left(wait=True)
+        self.debug.press_left(wait=True)
+        assert br.pages is not None
+        for _ in range(br.pages - 1):
+            self.debug.press_right()
+        # Confirm
+        self.debug.press_middle()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        if self.passphrase:
+            yield
+            self.debug.press_yes()
+            yield
+            self.debug.press_yes()
+
+        br = yield
+        layout = self.debug.wait_layout()
+        if "coinjoin" in layout.title().lower() or br.code == B.UnknownDerivationPath:
+            self.debug.press_yes()
+            br = yield
+            layout = self.debug.wait_layout()
+
+        assert layout.title() in TR.translate("address__public_key") + ["XPUB"]
+
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        assert "VerticalMenu" in self.all_components()
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[0], wait=True)
+        self.debug.synchronize_at("Qr")
+        # qr code
+        assert "Qr" in self.all_components()
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        # menu
+        assert "VerticalMenu" in self.all_components()
+        self.debug.click(buttons.VERTICAL_MENU[1], wait=True)
+        layout = self.debug.synchronize_at("AddressDetails")
+        # address details
+        TR.assert_in(layout.screen_content(), "address_details__derivation_path")
+
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        layout = self.debug.synchronize_at("VerticalMenu")
+        # menu
+        self.debug.click(buttons.VERTICAL_MENU[2], wait=True)
+        # cancel
+        self.debug.swipe_up(wait=True)
+        # really cancel
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        layout = self.debug.synchronize_at("VerticalMenu")
+        # menu
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        layout = self.debug.synchronize_at("Paragraphs")
+        # address
+        while "PromptScreen" not in layout.all_components():
+            layout = self.debug.swipe_up(wait=True)
+        self.debug.synchronize_at("PromptScreen")
+        # tap to confirm
+        self.debug.press_yes()
 
 
 class InputFlowPaymentRequestDetails(InputFlowBase):
@@ -410,6 +710,29 @@ class InputFlowPaymentRequestDetails(InputFlowBase):
         yield  # confirm transaction
         self.debug.press_yes()
 
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield  # request to see details
+        self.debug.wait_layout()
+        self.debug.press_info()
+
+        yield  # confirm first output
+        assert self.outputs[0].address[:16] in self.text_content()  # type: ignore
+        self.debug.swipe_up()
+        yield  # confirm first output
+        self.debug.wait_layout()
+        self.debug.swipe_up()
+
+        yield  # confirm second output
+        assert self.outputs[1].address[:16] in self.text_content()  # type: ignore
+        self.debug.swipe_up()
+        yield  # confirm second output
+        self.debug.wait_layout()
+        self.debug.swipe_up()
+
+        yield  # confirm transaction
+        self.debug.swipe_up()
+        self.debug.press_yes()
+
 
 class InputFlowSignTxHighFee(InputFlowBase):
     def __init__(self, client: Client):
@@ -436,10 +759,27 @@ class InputFlowSignTxHighFee(InputFlowBase):
     def input_flow_tr(self) -> BRGeneratorType:
         screens = [
             B.ConfirmOutput,
+            B.ConfirmOutput,
             B.FeeOverThreshold,
             B.SignTx,
         ]
         yield from self.go_through_all_screens(screens)
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        screens = [
+            B.ConfirmOutput,
+            B.ConfirmOutput,
+            B.FeeOverThreshold,
+            B.SignTx,
+        ]
+        for expected in screens:
+            br = yield
+            assert br.code == expected
+            self.debug.swipe_up()
+            if br.code == B.SignTx:
+                self.debug.press_yes()
+
+        self.finished = True
 
 
 def sign_tx_go_to_info(client: Client) -> Generator[None, None, str]:
@@ -455,8 +795,45 @@ def sign_tx_go_to_info(client: Client) -> Generator[None, None, str]:
     client.debug.press_info()
 
     layout = client.debug.wait_layout()
-    content = layout.text_content().lower()
+    content = layout.text_content()
 
+    client.debug.click(buttons.CORNER_BUTTON, wait=True)
+
+    return content
+
+
+def sign_tx_go_to_info_t3t1(
+    client: Client, multi_account: bool = False
+) -> Generator[None, None, str]:
+    yield  # confirm output
+    client.debug.wait_layout()
+    client.debug.swipe_up()
+    yield  # confirm output
+    client.debug.wait_layout()
+    client.debug.swipe_up()
+
+    if multi_account:
+        yield
+        client.debug.wait_layout()
+        client.debug.swipe_up()
+
+    yield  # confirm transaction
+    client.debug.wait_layout()
+    client.debug.click(buttons.CORNER_BUTTON)
+    client.debug.synchronize_at("VerticalMenu")
+    client.debug.click(buttons.VERTICAL_MENU[0])
+
+    layout = client.debug.wait_layout()
+    content = layout.text_content()
+
+    client.debug.click(buttons.CORNER_BUTTON)
+    client.debug.synchronize_at("VerticalMenu")
+    client.debug.click(buttons.VERTICAL_MENU[1])
+
+    layout = client.debug.wait_layout()
+    content += " " + layout.text_content()
+
+    client.debug.click(buttons.CORNER_BUTTON)
     client.debug.click(buttons.CORNER_BUTTON, wait=True)
 
     return content
@@ -465,15 +842,21 @@ def sign_tx_go_to_info(client: Client) -> Generator[None, None, str]:
 def sign_tx_go_to_info_tr(
     client: Client,
 ) -> Generator[None, None, str]:
-    yield  # confirm output
+    yield  # confirm address
     client.debug.wait_layout()
-    client.debug.press_right()  # CONTINUE
+    client.debug.press_yes()  # CONTINUE
+    yield  # confirm amount
     client.debug.wait_layout()
-    client.debug.press_right()  # CONFIRM
+    client.debug.press_yes()  # CONFIRM
 
     screen_texts: list[str] = []
 
     yield  # confirm total
+    layout = client.debug.wait_layout()
+    if "multiple accounts" in layout.text_content().lower():
+        client.debug.press_middle()
+        yield
+
     layout = client.debug.press_right(wait=True)
     screen_texts.append(layout.text_content())
 
@@ -490,20 +873,27 @@ class InputFlowSignTxInformation(InputFlowBase):
     def __init__(self, client: Client):
         super().__init__(client)
 
-    def assert_content(self, content: str) -> None:
-        assert "sending from" in content
-        assert "legacy #6" in content
-        assert "fee rate" in content
+    def assert_content(self, content: str, title_path: str) -> None:
+        TR.assert_in(content, title_path)
+        assert "Legacy #6" in content
+        TR.assert_in(content, "confirm_total__fee_rate")
         assert "71.56 sat" in content
 
     def input_flow_tt(self) -> BRGeneratorType:
         content = yield from sign_tx_go_to_info(self.client)
-        self.assert_content(content)
+        self.assert_content(content, "confirm_total__sending_from_account")
         self.debug.press_yes()
 
     def input_flow_tr(self) -> BRGeneratorType:
         content = yield from sign_tx_go_to_info_tr(self.client)
-        self.assert_content(content.lower())
+        print("content", content)
+        self.assert_content(content, "confirm_total__title_sending_from")
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        content = yield from sign_tx_go_to_info_t3t1(self.client)
+        self.assert_content(content, "confirm_total__sending_from_account")
+        self.debug.swipe_up()
         self.debug.press_yes()
 
 
@@ -511,20 +901,34 @@ class InputFlowSignTxInformationMixed(InputFlowBase):
     def __init__(self, client: Client):
         super().__init__(client)
 
-    def assert_content(self, content: str) -> None:
-        assert "sending from" in content
-        assert "multiple accounts" in content
-        assert "fee rate" in content
+    def assert_content(self, content: str, title_path: str) -> None:
+        TR.assert_in(content, title_path)
+        TR.assert_in(content, "bitcoin__multiple_accounts")
+        TR.assert_in(content, "confirm_total__fee_rate")
         assert "18.33 sat" in content
 
     def input_flow_tt(self) -> BRGeneratorType:
+        # multiple accounts warning
+        yield
+        self.debug.press_yes()
+
         content = yield from sign_tx_go_to_info(self.client)
-        self.assert_content(content)
+        self.assert_content(content, "confirm_total__sending_from_account")
         self.debug.press_yes()
 
     def input_flow_tr(self) -> BRGeneratorType:
+        # multiple accounts warning
+        yield
+        self.debug.press_yes()
+
         content = yield from sign_tx_go_to_info_tr(self.client)
-        self.assert_content(content.lower())
+        self.assert_content(content, "confirm_total__title_sending_from")
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        content = yield from sign_tx_go_to_info_t3t1(self.client, multi_account=True)
+        self.assert_content(content, "confirm_total__sending_from_account")
+        self.debug.swipe_up()
         self.debug.press_yes()
 
 
@@ -539,6 +943,13 @@ class InputFlowSignTxInformationCancel(InputFlowBase):
     def input_flow_tr(self) -> BRGeneratorType:
         yield from sign_tx_go_to_info_tr(self.client)
         self.debug.press_left()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield from sign_tx_go_to_info_t3t1(self.client)
+        self.debug.click(buttons.CORNER_BUTTON)
+        self.debug.click(buttons.VERTICAL_MENU[2])
+        self.debug.synchronize_at("PromptScreen")
+        self.debug.click(buttons.TAP_TO_CONFIRM)
 
 
 class InputFlowSignTxInformationReplacement(InputFlowBase):
@@ -574,11 +985,29 @@ class InputFlowSignTxInformationReplacement(InputFlowBase):
         self.debug.press_right()
         self.debug.press_right()
         self.debug.press_right()
+        yield
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield  # confirm txid
+        self.debug.press_yes()
+        yield  # confirm address
+        self.debug.press_yes()
+        # go back to address
+        self.debug.press_no()
+        # confirm address
+        self.debug.press_yes()
+        yield  # confirm amount
+        self.debug.press_yes()
+
+        yield  # transaction summary, press info
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.click(buttons.CORNER_BUTTON, wait=True)
+        self.debug.press_yes()
 
 
 def lock_time_input_flow_tt(
     debug: DebugLink,
-    layout_assert_func: Callable[[DebugLink], None],
+    layout_assert_func: Callable[[DebugLink, messages.ButtonRequest], None],
     double_confirm: bool = False,
 ) -> BRGeneratorType:
     yield  # confirm output
@@ -588,8 +1017,8 @@ def lock_time_input_flow_tt(
     debug.wait_layout()
     debug.press_yes()
 
-    yield  # confirm locktime
-    layout_assert_func(debug)
+    br = yield  # confirm locktime
+    layout_assert_func(debug, br)
     debug.press_yes()
 
     yield  # confirm transaction
@@ -600,20 +1029,46 @@ def lock_time_input_flow_tt(
 
 
 def lock_time_input_flow_tr(
-    debug: DebugLink, layout_assert_func: Callable[[DebugLink], None]
+    debug: DebugLink,
+    layout_assert_func: Callable[[DebugLink, messages.ButtonRequest], None],
 ) -> BRGeneratorType:
-    yield  # confirm output
+    yield  # confirm address
     debug.wait_layout()
-    debug.swipe_up()
+    debug.press_yes()
+    yield  # confirm amount
     debug.wait_layout()
     debug.press_yes()
 
-    yield  # confirm locktime
-    layout_assert_func(debug)
+    br = yield  # confirm locktime
+    layout_assert_func(debug, br)
     debug.press_yes()
 
     yield  # confirm transaction
     debug.press_yes()
+
+
+def lock_time_input_flow_t3t1(
+    debug: DebugLink,
+    layout_assert_func: Callable[[DebugLink, messages.ButtonRequest], None],
+    double_confirm: bool = False,
+) -> BRGeneratorType:
+    yield  # confirm output
+    debug.wait_layout()
+    debug.swipe_up()
+    yield  # confirm output
+    debug.wait_layout()
+    debug.swipe_up()
+
+    br = yield  # confirm locktime
+    layout_assert_func(debug, br)
+    debug.press_yes()
+
+    yield  # confirm transaction
+    debug.swipe_up()
+    debug.press_yes()
+    if double_confirm:
+        yield  # confirm transaction
+        debug.press_yes()
 
 
 class InputFlowLockTimeBlockHeight(InputFlowBase):
@@ -621,9 +1076,9 @@ class InputFlowLockTimeBlockHeight(InputFlowBase):
         super().__init__(client)
         self.block_height = block_height
 
-    def assert_func(self, debug: DebugLink) -> None:
-        layout_text = debug.wait_layout().text_content()
-        assert "blockheight" in layout_text
+    def assert_func(self, debug: DebugLink, br: messages.ButtonRequest) -> None:
+        layout_text = get_text_possible_pagination(debug, br)
+        TR.assert_in(layout_text, "bitcoin__locktime_set_to_blockheight")
         assert self.block_height in layout_text
 
     def input_flow_tt(self) -> BRGeneratorType:
@@ -634,22 +1089,30 @@ class InputFlowLockTimeBlockHeight(InputFlowBase):
     def input_flow_tr(self) -> BRGeneratorType:
         yield from lock_time_input_flow_tr(self.debug, self.assert_func)
 
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield from lock_time_input_flow_t3t1(
+            self.debug, self.assert_func, double_confirm=True
+        )
+
 
 class InputFlowLockTimeDatetime(InputFlowBase):
     def __init__(self, client: Client, lock_time_str: str):
         super().__init__(client)
         self.lock_time_str = lock_time_str
 
-    def assert_func(self, debug: DebugLink):
-        layout_text = debug.wait_layout().text_content()
-        assert "Locktime" in layout_text
-        assert self.lock_time_str in layout_text
+    def assert_func(self, debug: DebugLink, br: messages.ButtonRequest) -> None:
+        layout_text = get_text_possible_pagination(debug, br)
+        TR.assert_in(layout_text, "bitcoin__locktime_set_to")
+        assert self.lock_time_str.replace(" ", "") in layout_text.replace(" ", "")
 
     def input_flow_tt(self) -> BRGeneratorType:
         yield from lock_time_input_flow_tt(self.debug, self.assert_func)
 
     def input_flow_tr(self) -> BRGeneratorType:
         yield from lock_time_input_flow_tr(self.debug, self.assert_func)
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield from lock_time_input_flow_t3t1(self.debug, self.assert_func)
 
 
 class InputFlowEIP712ShowMore(InputFlowBase):
@@ -661,9 +1124,9 @@ class InputFlowEIP712ShowMore(InputFlowBase):
 
     def _confirm_show_more(self) -> None:
         """Model-specific, either clicks a screen or presses a button."""
-        if self.model() == "T":
+        if self.model() in (models.T2T1, models.T3T1):
             self.debug.click(self.SHOW_MORE)
-        elif self.model() == "R":
+        elif self.model() is models.T2B1:
             self.debug.press_right()
 
     def input_flow_common(self) -> BRGeneratorType:
@@ -722,134 +1185,68 @@ class InputFlowEIP712Cancel(InputFlowBase):
         self.debug.press_no()
 
 
-class InputFlowEthereumSignTxSkip(InputFlowBase):
+class InputFlowEthereumSignTxShowFeeInfo(InputFlowBase):
+    def __init__(self, client: Client):
+        super().__init__(client)
+
+    def input_flow_common(self) -> BRGeneratorType:
+        yield from self.ETH.confirm_tx(info=True)
+
+
+class InputFlowEthereumSignTxGoBackFromSummary(InputFlowBase):
+    def __init__(self, client: Client):
+        super().__init__(client)
+
+    def input_flow_common(self) -> BRGeneratorType:
+        yield from self.ETH.confirm_tx(go_back_from_summary=True)
+
+
+class InputFlowEthereumSignTxDataSkip(InputFlowBase):
     def __init__(self, client: Client, cancel: bool = False):
         super().__init__(client)
         self.cancel = cancel
 
     def input_flow_common(self) -> BRGeneratorType:
-        yield  # confirm address
-        self.debug.press_yes()
-        yield  # confirm amount
-        self.debug.wait_layout()
-        self.debug.press_yes()
-        yield  # confirm data
-        if self.cancel:
-            self.debug.press_no()
-        else:
-            self.debug.press_yes()
-            yield  # gas price
-            self.debug.press_yes()
-            yield  # maximum fee
-            self.debug.press_yes()
-            yield  # hold to confirm
-            self.debug.press_yes()
+        yield from self.ETH.confirm_data()
+        yield from self.ETH.confirm_tx(cancel=self.cancel)
 
 
-class InputFlowEthereumSignTxScrollDown(InputFlowBase):
-    SHOW_ALL = (143, 167)
-
+class InputFlowEthereumSignTxDataScrollDown(InputFlowBase):
     def __init__(self, client: Client, cancel: bool = False):
         super().__init__(client)
         self.cancel = cancel
 
-    def input_flow_tt(self) -> BRGeneratorType:
-        yield  # confirm address
-        self.debug.wait_layout()
-        self.debug.press_yes()
-        yield  # confirm amount
-        self.debug.wait_layout()
-        self.debug.press_yes()
-        yield  # confirm data
-        self.debug.wait_layout()
-        self.debug.click(self.SHOW_ALL)
-
-        br = yield  # paginated data
-        assert br.pages is not None
-        for i in range(br.pages):
-            self.debug.wait_layout()
-            if i < br.pages - 1:
-                self.debug.swipe_up()
-
-        self.debug.press_yes()
-        yield  # confirm data
+    def input_flow_common(self) -> BRGeneratorType:
+        yield from self.ETH.confirm_data(info=True)
+        yield from self.ETH.paginate_data()
         if self.cancel:
-            self.debug.press_no()
+            yield from self.ETH.confirm_data(cancel=True)
         else:
-            self.debug.press_yes()
-            yield  # gas price
-            self.debug.press_yes()
-            yield  # maximum fee
-            self.debug.press_yes()
-            yield  # hold to confirm
-            self.debug.press_yes()
-
-    def input_flow_tr(self) -> BRGeneratorType:
-        yield  # confirm address
-        self.debug.wait_layout()
-        self.debug.press_yes()
-
-        br = yield  # paginated data
-        assert br.pages is not None
-        for _ in range(br.pages):
-            self.debug.wait_layout()
-            self.debug.swipe_up()
-
-        yield  # confirm amount
-        self.debug.wait_layout()
-        self.debug.press_yes()
-
-        yield  # confirm before send
-        if self.cancel:
-            self.debug.press_no()
-        else:
-            self.debug.press_yes()
+            yield from self.ETH.confirm_data()
+            yield from self.ETH.confirm_tx()
 
 
-class InputFlowEthereumSignTxGoBack(InputFlowBase):
-    SHOW_ALL = (143, 167)
-    GO_BACK = (16, 220)
-
+class InputFlowEthereumSignTxDataGoBack(InputFlowBase):
     def __init__(self, client: Client, cancel: bool = False):
         super().__init__(client)
         self.cancel = cancel
 
-    def input_flow_tt(self) -> BRGeneratorType:
-        br = yield  # confirm address
-        self.debug.wait_layout()
-        self.debug.press_yes()
-        br = yield  # confirm amount
-        self.debug.wait_layout()
-        self.debug.press_yes()
-        br = yield  # confirm data
-        self.debug.wait_layout()
-        self.debug.click(self.SHOW_ALL)
+    def input_flow_common(self) -> BRGeneratorType:
+        yield from self.ETH.confirm_data(info=True)
+        yield from self.ETH.paginate_data_go_back()
+        if self.cancel:
+            yield from self.ETH.confirm_data(cancel=True)
+        else:
+            yield from self.ETH.confirm_data()
+            yield from self.ETH.confirm_tx()
 
-        br = yield  # paginated data
-        assert br.pages is not None
-        for i in range(br.pages):
-            self.debug.wait_layout()
-            if i == 2:
-                self.debug.click(self.GO_BACK)
-                yield  # confirm data
-                self.debug.wait_layout()
-                if self.cancel:
-                    self.debug.press_no()
-                else:
-                    self.debug.press_yes()
-                    yield  # confirm address
-                    self.debug.wait_layout()
-                    self.debug.press_yes()
-                    yield  # confirm amount
-                    self.debug.wait_layout()
-                    self.debug.press_yes()
-                    yield  # hold to confirm
-                    self.debug.wait_layout()
-                    self.debug.press_yes()
-                return
 
-            elif i < br.pages - 1:
-                self.debug.swipe_up()
+class InputFlowEthereumSignTxStaking(InputFlowBase):
+    def __init__(self, client: Client):
+        super().__init__(client)
+
+    def input_flow_common(self) -> BRGeneratorType:
+        yield from self.ETH.confirm_tx_staking(info=True)
 
 
 def get_mnemonic_and_confirm_success(
@@ -858,9 +1255,11 @@ def get_mnemonic_and_confirm_success(
     # mnemonic phrases
     mnemonic = yield from read_and_confirm_mnemonic(debug)
 
-    br = yield  # confirm recovery seed check
-    assert br.code == B.Success
-    debug.press_yes()
+    is_slip39 = len(mnemonic.split()) in (20, 33)
+    if debug.model in (models.T2T1, models.T2B1) or is_slip39:
+        br = yield  # confirm recovery share check
+        assert br.code == B.Success
+        debug.press_yes()
 
     br = yield  # confirm success
     assert br.code == B.Success
@@ -876,8 +1275,9 @@ class InputFlowBip39Backup(InputFlowBase):
         self.mnemonic = None
 
     def input_flow_common(self) -> BRGeneratorType:
-        # 1. Confirm Reset
-        yield from click_through(self.debug, screens=1, code=B.ResetDevice)
+        # 1. Backup intro
+        # 2. Backup warning
+        yield from click_through(self.debug, screens=2, code=B.ResetDevice)
 
         # mnemonic phrases and rest
         self.mnemonic = yield from get_mnemonic_and_confirm_success(self.debug)
@@ -889,11 +1289,33 @@ class InputFlowBip39ResetBackup(InputFlowBase):
         self.mnemonic = None
 
     # NOTE: same as above, just two more YES
-    def input_flow_common(self) -> BRGeneratorType:
+    def input_flow_tt(self) -> BRGeneratorType:
         # 1. Confirm Reset
         # 2. Backup your seed
-        # 3. Confirm warning
-        yield from click_through(self.debug, screens=3, code=B.ResetDevice)
+        # 3. Backup intro
+        # 4. Confirm warning
+        yield from click_through(self.debug, screens=4, code=B.ResetDevice)
+
+        # mnemonic phrases and rest
+        self.mnemonic = yield from get_mnemonic_and_confirm_success(self.debug)
+
+    def input_flow_tr(self) -> BRGeneratorType:
+        # 1. Confirm Reset
+        # 2. Backup your seed
+        # 3. Backup intro
+        # 4. Confirm warning
+        yield from click_through(self.debug, screens=4, code=B.ResetDevice)
+
+        # mnemonic phrases and rest
+        self.mnemonic = yield from get_mnemonic_and_confirm_success(self.debug)
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        # 1. Confirm Reset
+        # 2. Wallet created
+        # 3. Backup your seed
+        # 4. Backup intro
+        # 5. Confirm warning
+        yield from click_through(self.debug, screens=5, code=B.ResetDevice)
 
         # mnemonic phrases and rest
         self.mnemonic = yield from get_mnemonic_and_confirm_success(self.debug)
@@ -915,11 +1337,20 @@ class InputFlowBip39ResetPIN(InputFlowBase):
         assert br.code == B.ResetDevice
         self.debug.press_yes()
 
+        if self.debug.model is models.T3T1:
+            br = yield  # Wallet created
+            assert br.code == B.ResetDevice
+            self.debug.press_yes()
+
         br = yield  # Backup your seed
         assert br.code == B.ResetDevice
         self.debug.press_yes()
 
         br = yield  # Confirm warning
+        assert br.code == B.ResetDevice
+        self.debug.press_yes()
+
+        br = yield  # Backup intro
         assert br.code == B.ResetDevice
         self.debug.press_yes()
 
@@ -941,10 +1372,13 @@ class InputFlowBip39ResetFailedCheck(InputFlowBase):
         self.mnemonic = None
 
     def input_flow_common(self) -> BRGeneratorType:
+        screens = 5 if self.debug.model is models.T3T1 else 4
         # 1. Confirm Reset
-        # 2. Backup your seed
-        # 3. Confirm warning
-        yield from click_through(self.debug, screens=3, code=B.ResetDevice)
+        # 1a. (T3T1) Walet Creation done
+        # 2. Confirm backup prompt
+        # 3. Backup your seed
+        # 4. Confirm warning
+        yield from click_through(self.debug, screens=screens, code=B.ResetDevice)
 
         # mnemonic phrases, wrong answer
         self.mnemonic = yield from read_and_confirm_mnemonic(
@@ -967,12 +1401,13 @@ class InputFlowBip39ResetFailedCheck(InputFlowBase):
         self.debug.press_yes()
 
 
-def load_5_shares(
+def load_N_shares(
     debug: DebugLink,
+    n: int,
 ) -> Generator[None, "messages.ButtonRequest", list[str]]:
     mnemonics: list[str] = []
 
-    for _ in range(5):
+    for _ in range(n):
         # Phrase screen
         mnemonic = yield from read_and_confirm_mnemonic(debug)
         assert mnemonic is not None
@@ -986,56 +1421,105 @@ def load_5_shares(
 
 
 class InputFlowSlip39BasicBackup(InputFlowBase):
-    def __init__(self, client: Client, click_info: bool):
+    def __init__(self, client: Client, click_info: bool, repeated: bool = False):
         super().__init__(client)
         self.mnemonics: list[str] = []
         self.click_info = click_info
+        self.repeated = repeated
 
     def input_flow_tt(self) -> BRGeneratorType:
-        yield  # 1. Checklist
+        if self.repeated:
+            # intro confirmation screen
+            yield
+            self.debug.press_yes()
+
+        yield  # 1. Backup intro
+        self.debug.press_yes()
+        yield  # 2. Checklist
         self.debug.press_yes()
         if self.click_info:
             yield from click_info_button_tt(self.debug)
-        yield  # 2. Number of shares (5)
+        yield  # 3. Number of shares (5)
         self.debug.press_yes()
-        yield  # 3. Checklist
+        yield  # 4. Checklist
         self.debug.press_yes()
         if self.click_info:
             yield from click_info_button_tt(self.debug)
-        yield  # 4. Threshold (3)
+        yield  # 5. Threshold (3)
         self.debug.press_yes()
-        yield  # 5. Checklist
+        yield  # 6. Checklist
         self.debug.press_yes()
-        yield  # 6. Confirm show seeds
+        yield  # 7. Confirm show seeds
         self.debug.press_yes()
 
         # Mnemonic phrases
-        self.mnemonics = yield from load_5_shares(self.debug)
+        self.mnemonics = yield from load_N_shares(self.debug, 5)
 
         br = yield  # Confirm backup
         assert br.code == B.Success
         self.debug.press_yes()
 
     def input_flow_tr(self) -> BRGeneratorType:
-        yield  # 1. Checklist
+        if self.repeated:
+            # intro confirmation screen
+            yield
+            self.debug.press_yes()
+
+        yield  # 1. Backup intro
         self.debug.press_yes()
-        yield  # 1.5 Number of shares info
+        yield  # 2. Checklist
         self.debug.press_yes()
-        yield  # 2. Number of shares (5)
+        yield  # 2.5 Number of shares info
+        self.debug.press_yes()
+        yield  # 3. Number of shares (5)
         self.debug.input("5")
-        yield  # 3. Checklist
+        yield  # 4. Checklist
         self.debug.press_yes()
-        yield  # 3.5 Threshold info
+        yield  # 4.5 Threshold info
         self.debug.press_yes()
-        yield  # 4. Threshold (3)
+        yield  # 5. Threshold (3)
         self.debug.input("3")
-        yield  # 5. Checklist
+        yield  # 6. Checklist
         self.debug.press_yes()
-        yield  # 6. Confirm show seeds
+        yield  # 7. Confirm show seeds
         self.debug.press_yes()
 
         # Mnemonic phrases
-        self.mnemonics = yield from load_5_shares(self.debug)
+        self.mnemonics = yield from load_N_shares(self.debug, 5)
+
+        br = yield  # Confirm backup
+        assert br.code == B.Success
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        if self.repeated:
+            # intro confirmation screen
+            yield
+            self.debug.press_yes()
+
+        yield  # 1. Backup intro
+        self.debug.wait_layout()
+        self.debug.swipe_up()
+        yield  # 2. Checklist
+        self.debug.wait_layout()
+        self.debug.swipe_up(wait=True)
+        if self.click_info:
+            click_info_button_mercury(self.debug)
+        yield  # 3. Number of shares (5)
+        self.debug.swipe_up()
+        yield  # 4. Checklist
+        self.debug.swipe_up(wait=True)
+        if self.click_info:
+            click_info_button_mercury(self.debug)
+        yield  # 5. Threshold (3)
+        self.debug.swipe_up()
+        yield  # 6. Checklist
+        self.debug.swipe_up()
+        yield  # 7. Confirm show seeds
+        self.debug.swipe_up()
+
+        # Mnemonic phrases
+        self.mnemonics = yield from load_N_shares(self.debug, 5)
 
         br = yield  # Confirm backup
         assert br.code == B.Success
@@ -1050,16 +1534,17 @@ class InputFlowSlip39BasicResetRecovery(InputFlowBase):
     def input_flow_tt(self) -> BRGeneratorType:
         # 1. Confirm Reset
         # 2. Backup your seed
-        # 3. Confirm warning
-        # 4. shares info
-        # 5. Set & Confirm number of shares
-        # 6. threshold info
-        # 7. Set & confirm threshold value
-        # 8. Confirm show seeds
-        yield from click_through(self.debug, screens=8, code=B.ResetDevice)
+        # 3. Backup intro
+        # 4. Confirm warning
+        # 5. shares info
+        # 6. Set & Confirm number of shares
+        # 7. threshold info
+        # 8. Set & confirm threshold value
+        # 9. Confirm show seeds
+        yield from click_through(self.debug, screens=9, code=B.ResetDevice)
 
         # Mnemonic phrases
-        self.mnemonics = yield from load_5_shares(self.debug)
+        self.mnemonics = yield from load_N_shares(self.debug, 5)
 
         br = yield  # safety warning
         assert br.code == B.Success
@@ -1069,6 +1554,8 @@ class InputFlowSlip39BasicResetRecovery(InputFlowBase):
         yield  # Confirm Reset
         self.debug.press_yes()
         yield  # Backup your seed
+        self.debug.press_yes()
+        yield  # Backup intro
         self.debug.press_yes()
         yield  # Checklist
         self.debug.press_yes()
@@ -1088,7 +1575,101 @@ class InputFlowSlip39BasicResetRecovery(InputFlowBase):
         self.debug.press_yes()
 
         # Mnemonic phrases
-        self.mnemonics = yield from load_5_shares(self.debug)
+        self.mnemonics = yield from load_N_shares(self.debug, 5)
+
+        br = yield  # Confirm backup
+        assert br.code == B.Success
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        # 1. Confirm Reset
+        # 2. Wallet Created
+        # 3. Backup your seed
+        # 4. Backup intro
+        # 5. Set & Confirm number of shares
+        # 6. threshold info
+        # 7. Set & confirm threshold value
+        # 8. Confirm show seeds
+        # 9. Warning
+        # 10. Instructions
+        yield from click_through(self.debug, screens=10, code=B.ResetDevice)
+
+        # Mnemonic phrases
+        self.mnemonics = yield from load_N_shares(self.debug, 5)
+
+        br = yield  # safety warning
+        assert br.code == B.Success
+        self.debug.press_yes()
+
+
+class InputFlowSlip39CustomBackup(InputFlowBase):
+    def __init__(self, client: Client, share_count: int, repeated: bool = False):
+        super().__init__(client)
+        self.mnemonics: list[str] = []
+        self.share_count = share_count
+        self.repeated = repeated
+
+    def input_flow_tt(self) -> BRGeneratorType:
+        if self.repeated:
+            yield
+            self.debug.press_yes()
+
+        if self.share_count > 1:
+            yield  # Checklist
+            self.debug.press_yes()
+        else:
+            yield  # Backup intro
+            self.debug.press_yes()
+
+        yield  # Confirm show seeds
+        self.debug.press_yes()
+
+        # Mnemonic phrases
+        self.mnemonics = yield from load_N_shares(self.debug, self.share_count)
+
+        br = yield  # Confirm backup
+        assert br.code == B.Success
+        self.debug.press_yes()
+
+    def input_flow_tr(self) -> BRGeneratorType:
+        if self.repeated:
+            yield
+            self.debug.press_yes()
+
+        if self.share_count > 1:
+            yield  # Checklist
+            self.debug.press_yes()
+        else:
+            yield  # Backup intro
+            self.debug.press_yes()
+
+        yield  # Confirm show seeds
+        self.debug.press_yes()
+
+        # Mnemonic phrases
+        self.mnemonics = yield from load_N_shares(self.debug, self.share_count)
+
+        br = yield  # Confirm backup
+        assert br.code == B.Success
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        if self.repeated:
+            yield
+            self.debug.press_yes()
+
+        if self.share_count > 1:
+            yield  # Checklist
+            self.debug.press_yes()
+        else:
+            yield  # Backup intro
+            self.debug.press_yes()
+
+        yield  # Confirm show seeds
+        self.debug.press_yes()
+
+        # Mnemonic phrases
+        self.mnemonics = yield from load_N_shares(self.debug, self.share_count)
 
         br = yield  # Confirm backup
         assert br.code == B.Success
@@ -1120,19 +1701,21 @@ class InputFlowSlip39AdvancedBackup(InputFlowBase):
         self.click_info = click_info
 
     def input_flow_tt(self) -> BRGeneratorType:
-        yield  # 1. Checklist
+        yield  # 1. Backup intro
+        self.debug.press_yes()
+        yield  # 2. Checklist
         self.debug.press_yes()
         if self.click_info:
             yield from click_info_button_tt(self.debug)
-        yield  # 2. Set and confirm group count
+        yield  # 3. Set and confirm group count
         self.debug.press_yes()
-        yield  # 3. Checklist
+        yield  # 4. Checklist
         self.debug.press_yes()
         if self.click_info:
             yield from click_info_button_tt(self.debug)
-        yield  # 4. Set and confirm group threshold
+        yield  # 5. Set and confirm group threshold
         self.debug.press_yes()
-        yield  # 5. Checklist
+        yield  # 6. Checklist
         self.debug.press_yes()
         for _ in range(5):  # for each of 5 groups
             if self.click_info:
@@ -1154,15 +1737,17 @@ class InputFlowSlip39AdvancedBackup(InputFlowBase):
         self.debug.press_yes()
 
     def input_flow_tr(self) -> BRGeneratorType:
-        yield  # 1. Checklist
+        yield  # 1. Backup intro
         self.debug.press_yes()
-        yield  # 2. Set and confirm group count
+        yield  # 2. Checklist
+        self.debug.press_yes()
+        yield  # 3. Set and confirm group count
         self.debug.input("5")
-        yield  # 3. Checklist
+        yield  # 4. Checklist
         self.debug.press_yes()
-        yield  # 4. Set and confirm group threshold
+        yield  # 5. Set and confirm group threshold
         self.debug.input("3")
-        yield  # 5. Checklist
+        yield  # 6. Checklist
         self.debug.press_yes()
         for _ in range(5):  # for each of 5 groups
             yield  # Number of shares info
@@ -1183,6 +1768,43 @@ class InputFlowSlip39AdvancedBackup(InputFlowBase):
         assert br.code == B.Success
         self.debug.press_yes()
 
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield  # 1. Backup intro
+        self.debug.wait_layout()
+        self.debug.swipe_up()
+        yield  # 2. Checklist
+        self.debug.swipe_up(wait=True)
+        if self.click_info:
+            click_info_button_mercury(self.debug)
+        yield  # 3. Set and confirm group count
+        self.debug.swipe_up()
+        yield  # 4. Checklist
+        self.debug.swipe_up(wait=True)
+        if self.click_info:
+            click_info_button_mercury(self.debug)
+        yield  # 5. Set and confirm group threshold
+        self.debug.swipe_up()
+        yield  # 6. Checklist
+        self.debug.swipe_up(wait=True)
+        for _i in range(5):  # for each of 5 groups
+            if self.click_info:
+                click_info_button_mercury(self.debug)
+            yield  # Set & Confirm number of shares
+            self.debug.swipe_up(wait=True)
+            if self.click_info:
+                click_info_button_mercury(self.debug)
+            yield  # Set & confirm share threshold value
+            self.debug.swipe_up(wait=_i != 4)
+        yield  # Confirm show seeds
+        self.debug.press_yes()
+
+        # Mnemonic phrases - show & confirm shares for all groups
+        self.mnemonics = yield from load_5_groups_5_shares(self.debug)
+
+        br = yield  # Confirm backup
+        assert br.code == B.Success
+        self.debug.press_yes()
+
 
 class InputFlowSlip39AdvancedResetRecovery(InputFlowBase):
     def __init__(self, client: Client, click_info: bool):
@@ -1193,16 +1815,17 @@ class InputFlowSlip39AdvancedResetRecovery(InputFlowBase):
     def input_flow_tt(self) -> BRGeneratorType:
         # 1. Confirm Reset
         # 2. Backup your seed
-        # 3. Confirm warning
-        # 4. shares info
-        # 5. Set & Confirm number of groups
-        # 6. threshold info
-        # 7. Set & confirm group threshold value
-        # 8-17: for each of 5 groups:
+        # 3. Backup intro
+        # 4. Confirm warning
+        # 5. shares info
+        # 6. Set & Confirm number of groups
+        # 7. threshold info
+        # 8. Set & confirm group threshold value
+        # 9-18: for each of 5 groups:
         #   1. Set & Confirm number of shares
         #   2. Set & confirm share threshold value
-        # 18. Confirm show seeds
-        yield from click_through(self.debug, screens=18, code=B.ResetDevice)
+        # 19. Confirm show seeds
+        yield from click_through(self.debug, screens=19, code=B.ResetDevice)
 
         # Mnemonic phrases - show & confirm shares for all groups
         self.mnemonics = yield from load_5_groups_5_shares(self.debug)
@@ -1215,6 +1838,8 @@ class InputFlowSlip39AdvancedResetRecovery(InputFlowBase):
         yield  # Wallet backup
         self.debug.press_yes()
         yield  # Wallet creation
+        self.debug.press_yes()
+        yield  # Backup intro
         self.debug.press_yes()
         yield  # Checklist
         self.debug.press_yes()
@@ -1237,6 +1862,29 @@ class InputFlowSlip39AdvancedResetRecovery(InputFlowBase):
             self.debug.input("3")
         yield  # Confirm show seeds
         self.debug.press_yes()
+
+        # Mnemonic phrases - show & confirm shares for all groups
+        self.mnemonics = yield from load_5_groups_5_shares(self.debug)
+
+        br = yield  # safety warning
+        assert br.code == B.Success
+        self.debug.press_yes()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        # 1. Confirm Reset
+        # 2. Wallet Created
+        # 3. Prompt Backup
+        # 4. Backup intro
+        # 5. Confirm warning
+        # 6. shares info
+        # 7. Set & Confirm number of groups
+        # 8. threshold info
+        # 9. Set & confirm group threshold value
+        # 10-19: for each of 5 groups:
+        #   1. Set & Confirm number of shares
+        #   2. Set & confirm share threshold value
+        # 20. Confirm show seeds
+        yield from click_through(self.debug, screens=20, code=B.ResetDevice)
 
         # Mnemonic phrases - show & confirm shares for all groups
         self.mnemonics = yield from load_5_groups_5_shares(self.debug)
@@ -1331,7 +1979,7 @@ class InputFlowSlip39AdvancedRecoveryAbort(InputFlowBase):
 
     def input_flow_common(self) -> BRGeneratorType:
         yield from self.REC.confirm_recovery()
-        if self.debug.model == "T":
+        if self.model() in (models.T2T1, models.T3T1):
             yield from self.REC.input_number_of_words(20)
         yield from self.REC.abort_recovery(True)
 
@@ -1344,7 +1992,7 @@ class InputFlowSlip39AdvancedRecoveryNoAbort(InputFlowBase):
 
     def input_flow_common(self) -> BRGeneratorType:
         yield from self.REC.confirm_recovery()
-        if self.debug.model == "T":
+        if self.model() in (models.T2T1, models.T3T1):
             yield from self.REC.input_number_of_words(self.word_count)
             yield from self.REC.abort_recovery(False)
         else:
@@ -1405,15 +2053,25 @@ class InputFlowSlip39AdvancedRecoveryShareAlreadyEntered(InputFlowBase):
 
 
 class InputFlowSlip39BasicRecoveryDryRun(InputFlowBase):
-    def __init__(self, client: Client, shares: list[str], mismatch: bool = False):
+    def __init__(
+        self,
+        client: Client,
+        shares: list[str],
+        mismatch: bool = False,
+        unlock_repeated_backup=False,
+    ):
         super().__init__(client)
         self.shares = shares
         self.mismatch = mismatch
+        self.unlock_repeated_backup = unlock_repeated_backup
         self.word_count = len(shares[0].split(" "))
 
     def input_flow_common(self) -> BRGeneratorType:
         yield from self.REC.confirm_dry_run()
-        yield from self.REC.setup_slip39_recovery(self.word_count)
+        if self.unlock_repeated_backup:
+            yield from self.REC.setup_repeated_backup_recovery(self.word_count)
+        else:
+            yield from self.REC.setup_slip39_recovery(self.word_count)
         yield from self.REC.input_all_slip39_shares(self.shares)
         if self.mismatch:
             yield from self.REC.warning_slip39_dryrun_mismatch()
@@ -1443,7 +2101,7 @@ class InputFlowSlip39BasicRecoveryAbort(InputFlowBase):
 
     def input_flow_common(self) -> BRGeneratorType:
         yield from self.REC.confirm_recovery()
-        if self.debug.model == "T":
+        if self.model() in (models.T2T1, models.T3T1):
             yield from self.REC.input_number_of_words(20)
         yield from self.REC.abort_recovery(True)
 
@@ -1457,7 +2115,7 @@ class InputFlowSlip39BasicRecoveryNoAbort(InputFlowBase):
     def input_flow_common(self) -> BRGeneratorType:
         yield from self.REC.confirm_recovery()
 
-        if self.debug.model == "T":
+        if self.model() in (models.T2T1, models.T3T1):
             yield from self.REC.input_number_of_words(self.word_count)
             yield from self.REC.abort_recovery(False)
         else:
@@ -1554,13 +2212,84 @@ class InputFlowResetSkipBackup(InputFlowBase):
     def __init__(self, client: Client):
         super().__init__(client)
 
-    def input_flow_common(self) -> BRGeneratorType:
+    def input_flow_tt(self) -> BRGeneratorType:
         yield from self.BAK.confirm_new_wallet()
         yield  # Skip Backup
-        assert "New wallet created" in self.text_content()
-        if self.debug.model == "R":
-            self.debug.press_right()
+        TR.assert_in(self.text_content(), "backup__new_wallet_successfully_created")
         self.debug.press_no()
         yield  # Confirm skip backup
-        assert "skip the backup" in self.text_content()
+        TR.assert_in(self.text_content(), "backup__want_to_skip")
         self.debug.press_no()
+
+    def input_flow_tr(self) -> BRGeneratorType:
+        yield from self.BAK.confirm_new_wallet()
+        yield  # Skip Backup
+        TR.assert_in(self.text_content(), "backup__new_wallet_created")
+        self.debug.press_right()
+        self.debug.press_no()
+        yield  # Confirm skip backup
+        TR.assert_in(self.text_content(), "backup__want_to_skip")
+        self.debug.press_no()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        yield from self.BAK.confirm_new_wallet()
+        yield  # Skip Backup
+        TR.assert_in(self.text_content(), "backup__new_wallet_created")
+        self.debug.swipe_up()
+        yield
+        self.debug.click(buttons.CORNER_BUTTON)
+        self.debug.synchronize_at("VerticalMenu")
+        self.debug.click(buttons.VERTICAL_MENU[0])
+        self.debug.swipe_up()
+        self.debug.synchronize_at("PromptScreen")
+        self.debug.click(buttons.TAP_TO_CONFIRM)
+
+
+class InputFlowConfirmAllWarnings(InputFlowBase):
+    def __init__(self, client: Client):
+        super().__init__(client)
+
+    def input_flow_tt(self) -> BRGeneratorType:
+        br = yield
+        while True:
+            # wait for homescreen to go away
+            self.debug.wait_layout()
+            self.client.ui._default_input_flow(br)
+            br = yield
+
+    def input_flow_tr(self) -> BRGeneratorType:
+        return self.input_flow_tt()
+
+    def input_flow_t3t1(self) -> BRGeneratorType:
+        br = yield
+        while True:
+            # wait for homescreen to go away
+            # probably won't be needed after https://github.com/trezor/trezor-firmware/pull/3686
+            self.debug.wait_layout()
+            # Paginating (going as further as possible) and pressing Yes
+            if br.pages is not None:
+                for _ in range(br.pages - 1):
+                    self.debug.swipe_up(wait=True)
+            layout = self.debug.read_layout()
+            text = layout.text_content().lower()
+            # hi priority warning
+            hi_prio = (
+                TR.translate("addr_mismatch__wrong_derivation_path")
+                + TR.translate("send__receiving_to_multisig")
+                + [
+                    "witness path",
+                    "certificate path",
+                    "pool owner staking path",
+                ]
+            )
+            if any(needle.lower() in text for needle in hi_prio):
+                self.debug.click(buttons.CORNER_BUTTON, wait=True)
+                self.debug.synchronize_at("VerticalMenu")
+                self.debug.click(buttons.VERTICAL_MENU[1])
+            elif "PromptScreen" in layout.all_components():
+                self.debug.press_yes()
+            elif "SwipeContent" in layout.all_components():
+                self.debug.swipe_up()
+            else:
+                self.debug.press_yes()
+            br = yield

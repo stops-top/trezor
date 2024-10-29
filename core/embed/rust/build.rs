@@ -8,34 +8,71 @@ fn main() {
     #[cfg(feature = "micropython")]
     generate_micropython_bindings();
     generate_trezorhal_bindings();
+    #[cfg(feature = "crypto")]
+    generate_crypto_bindings();
     #[cfg(feature = "test")]
     link_core_objects();
 }
 
-fn mcu_type() -> String {
-    match env::var("MCU_TYPE") {
-        Ok(mcu) => mcu,
-        Err(_) => String::from("STM32F427xx"),
-    }
-}
+const DEFAULT_BINDGEN_MACROS_COMMON: &[&str] = &[
+    "-I../unix",
+    "-I../trezorhal/unix",
+    "-I../../build/unix",
+    "-I../../vendor/micropython/ports/unix",
+    "-I../../../crypto",
+    "-I../../../storage",
+    "-I../../vendor/micropython",
+    "-I../../vendor/micropython/lib/uzlib",
+    "-I../lib",
+    "-I../trezorhal",
+    "-I../trezorhal/unix",
+    "-I../models",
+    "-DTREZOR_EMULATOR",
+];
 
-fn model() -> String {
-    match env::var("TREZOR_MODEL") {
-        Ok(model) => model,
-        Err(_) => String::from("T"),
-    }
-}
+#[cfg(feature = "model_tt")]
+const DEFAULT_BINDGEN_MACROS_T2T1: &[&str] = &[
+    "-DSTM32F427",
+    "-DTREZOR_MODEL_T",
+    "-DFLASH_BIT_ACCESS=1",
+    "-DFLASH_BLOCK_WORDS=1",
+    "-DTREZOR_BOARD=\"T2T1/boards/t2t1-unix.h\"",
+];
+#[cfg(not(feature = "model_tt"))]
+const DEFAULT_BINDGEN_MACROS_T2T1: &[&str] = &[];
 
-fn board() -> String {
-    if !is_firmware() {
-        return String::from("boards/board-unix.h");
-    }
+#[cfg(feature = "model_tr")]
+const DEFAULT_BINDGEN_MACROS_T2B1: &[&str] = &[
+    "-DSTM32F427",
+    "-DTREZOR_MODEL_R",
+    "-DFLASH_BIT_ACCESS=1",
+    "-DFLASH_BLOCK_WORDS=1",
+    "-DTREZOR_BOARD=\"T2B1/boards/t2b1-unix.h\"",
+];
+#[cfg(not(feature = "model_tr"))]
+const DEFAULT_BINDGEN_MACROS_T2B1: &[&str] = &[];
 
-    match env::var("TREZOR_BOARD") {
-        Ok(board) => {
-            format!("boards/{}", board)
-        }
-        Err(_) => String::from("boards/trezor_t.h"),
+#[cfg(feature = "model_mercury")]
+const DEFAULT_BINDGEN_MACROS_T3T1: &[&str] = &[
+    "-DSTM32U5",
+    "-DTREZOR_MODEL_T3T1",
+    "-DFLASH_BIT_ACCESS=0",
+    "-DFLASH_BLOCK_WORDS=4",
+    "-DTREZOR_BOARD=\"T3T1/boards/t3t1-unix.h\"",
+];
+#[cfg(not(feature = "model_mercury"))]
+const DEFAULT_BINDGEN_MACROS_T3T1: &[&str] = &[];
+
+fn add_bindgen_macros<'a>(clang_args: &mut Vec<&'a str>, envvar: Option<&'a str>) {
+    let default_macros = DEFAULT_BINDGEN_MACROS_COMMON
+        .iter()
+        .chain(DEFAULT_BINDGEN_MACROS_T2T1)
+        .chain(DEFAULT_BINDGEN_MACROS_T2B1)
+        .chain(DEFAULT_BINDGEN_MACROS_T3T1);
+
+    match envvar {
+        Some(envvar) => clang_args.extend(envvar.split(',')),
+        None => clang_args.extend(default_macros),
     }
 }
 
@@ -47,10 +84,15 @@ fn generate_qstr_bindings() {
     // Tell cargo to invalidate the built crate whenever the header changes.
     println!("cargo:rerun-if-changed=qstr.h");
 
+    let dest_file = PathBuf::from(out_path).join("qstr.rs");
+
     bindgen::Builder::default()
         .header("qstr.h")
         // Build the Qstr enum as a newtype so we can define method on it.
-        .default_enum_style(bindgen::EnumVariation::NewType { is_bitfield: false })
+        .default_enum_style(bindgen::EnumVariation::NewType {
+            is_bitfield: false,
+            is_global: false,
+        })
         // Pass in correct include paths.
         .clang_args(&[
             "-I",
@@ -69,42 +111,42 @@ fn generate_qstr_bindings() {
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .generate()
         .expect("Unable to generate Rust QSTR bindings")
-        .write_to_file(PathBuf::from(out_path).join("qstr.rs"))
+        .write_to_file(&dest_file)
         .unwrap();
+
+    // rewrite the file to change internal representation of the qstr newtype
+    let qstr_generated = std::fs::read_to_string(&dest_file).unwrap();
+    let qstr_modified = qstr_generated.replace(
+        "pub struct Qstr(pub cty::c_uint);",
+        "pub struct Qstr(pub usize);",
+    );
+    assert_ne!(qstr_generated, qstr_modified, "Failed to rewrite type of Qstr in qstr.rs file.\nThis indicates that the generated file has changed. Please update the rewriting code.");
+    std::fs::write(&dest_file, qstr_modified).unwrap();
 }
 
 fn prepare_bindings() -> bindgen::Builder {
     let mut bindings = bindgen::Builder::default();
 
-    // Common include paths and defines
-    bindings = bindings.clang_args([
-        "-I../../../crypto",
-        "-I../../../storage",
-        "-I../../vendor/micropython",
-        "-I../../vendor/micropython/lib/uzlib",
-        "-I../lib",
-        "-I../trezorhal",
-        format!("-D{}", mcu_type()).as_str(),
-        format!("-DTREZOR_MODEL_{}", model()).as_str(),
-        format!("-DTREZOR_BOARD=\"{}\"", board()).as_str(),
-    ]);
+    let mut clang_args: Vec<&str> = Vec::new();
+
+    let bindgen_macros_env = env::var("BINDGEN_MACROS").ok();
+    add_bindgen_macros(&mut clang_args, bindgen_macros_env.as_deref());
+
+    #[cfg(feature = "xframebuffer")]
+    {
+        bindings = bindings.clang_args(&["-DXFRAMEBUFFER"]);
+    }
+
+    #[cfg(feature = "new_rendering")]
+    {
+        bindings = bindings.clang_args(["-DNEW_RENDERING"]);
+    }
 
     // Pass in correct include paths and defines.
     if is_firmware() {
-        let mut clang_args: Vec<&str> = Vec::new();
-
-        let includes = env::var("RUST_INCLUDES").unwrap();
-        let args = includes.split(";");
-
-        for arg in args {
-            clang_args.push(arg);
-        }
         clang_args.push("-nostdinc");
-        clang_args.push("-I../firmware");
+
         clang_args.push("-I../../build/firmware");
-        clang_args.push("-I../../vendor/micropython/lib/cmsis/inc");
-        clang_args.push("-DUSE_HAL_DRIVER");
-        bindings = bindings.clang_args(&clang_args);
 
         // Append gcc-arm-none-eabi's include paths.
         let cc_output = Command::new("arm-none-eabi-gcc")
@@ -127,14 +169,10 @@ fn prepare_bindings() -> bindgen::Builder {
 
         bindings = bindings.clang_args(include_args);
     } else {
-        bindings = bindings.clang_args(&[
-            "-I../unix",
-            "-I../trezorhal/unix",
-            "-I../../build/unix",
-            "-I../../vendor/micropython/ports/unix",
-            "-DTREZOR_EMULATOR",
-        ]);
+        clang_args.push("-I../../build/unix");
     }
+
+    bindings = bindings.clang_args(&clang_args);
 
     bindings
         // Customize the standard types.
@@ -169,6 +207,7 @@ fn generate_micropython_bindings() {
         .allowlist_function("mp_obj_new_bytes")
         .allowlist_function("mp_obj_new_str")
         .allowlist_function("mp_obj_new_tuple")
+        .allowlist_function("mp_obj_new_attrtuple")
         .allowlist_function("mp_obj_get_int_maybe")
         .allowlist_function("mp_obj_is_true")
         .allowlist_function("mp_call_function_n_kw")
@@ -196,6 +235,7 @@ fn generate_micropython_bindings() {
         .allowlist_var("mp_type_fun_builtin_var")
         // gc
         .allowlist_function("gc_alloc")
+        .allowlist_var("GC_ALLOC_FLAG_HAS_FINALISER")
         // iter
         .allowlist_type("mp_obj_iter_buf_t")
         .allowlist_function("mp_getiter")
@@ -218,6 +258,7 @@ fn generate_micropython_bindings() {
         .allowlist_function("mp_obj_new_exception_args")
         .allowlist_function("trezor_obj_call_protected")
         .allowlist_var("mp_type_AttributeError")
+        .allowlist_var("mp_type_EOFError")
         .allowlist_var("mp_type_IndexError")
         .allowlist_var("mp_type_KeyError")
         .allowlist_var("mp_type_MemoryError")
@@ -237,6 +278,8 @@ fn generate_micropython_bindings() {
         .allowlist_var("mp_type_module")
         // qstr
         .allowlist_function("qstr_data")
+        // tuple
+        .allowlist_type("mp_obj_tuple_t")
         // `ffi::mp_map_t` type is not allowed to be `Clone` or `Copy` because we tie it
         // to the data lifetimes with the `MapRef` type, see `src/micropython/map.rs`.
         // TODO: We should disable `Clone` and `Copy` for all types and only allow-list
@@ -259,6 +302,9 @@ fn generate_trezorhal_bindings() {
 
     let bindings = prepare_bindings()
         .header("trezorhal.h")
+        // model
+        .allowlist_var("MODEL_INTERNAL_NAME")
+        .allowlist_var("MODEL_FULL_NAME")
         // common
         .allowlist_var("HW_ENTROPY_DATA")
         // secbool
@@ -285,29 +331,59 @@ fn generate_trezorhal_bindings() {
         .allowlist_function("storage_delete")
         .allowlist_function("storage_set_counter")
         .allowlist_function("storage_next_counter")
+        .allowlist_function("translations_read")
+        .allowlist_function("translations_write")
+        .allowlist_function("translations_erase")
+        .allowlist_function("translations_area_bytesize")
         // display
+        .allowlist_function("display_clear")
         .allowlist_function("display_offset")
         .allowlist_function("display_refresh")
         .allowlist_function("display_backlight")
         .allowlist_function("display_text")
         .allowlist_function("display_text_render_buffer")
-        .allowlist_function("display_text_width")
-        .allowlist_function("display_bar")
-        .allowlist_function("display_bar_radius")
-        .allowlist_function("display_bar_radius_buffer")
         .allowlist_function("display_pixeldata")
         .allowlist_function("display_pixeldata_dirty")
         .allowlist_function("display_set_window")
         .allowlist_function("display_sync")
+        .allowlist_function("display_get_fb_addr")
+        .allowlist_function("display_get_wr_addr")
         .allowlist_var("DISPLAY_DATA_ADDRESS")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_WIDTH")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_HEIGHT")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_OFFSET_X")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_OFFSET_Y")
         .allowlist_var("DISPLAY_RESX")
         .allowlist_var("DISPLAY_RESY")
-        .allowlist_type("toif_format_t")
+        .allowlist_type("display_fb_info_t")
+        .allowlist_function("display_get_frame_buffer")
+        .allowlist_function("display_fill")
+        .allowlist_function("display_copy_rgb565")
+        // gfx_bitblt
+        .allowlist_type("gfx_bitblt_t")
+        .allowlist_function("gfx_rgb565_fill")
+        .allowlist_function("gfx_rgb565_copy_mono4")
+        .allowlist_function("gfx_rgb565_copy_rgb565")
+        .allowlist_function("gfx_rgb565_blend_mono4")
+        .allowlist_function("gfx_rgb565_blend_mono8")
+        .allowlist_function("gfx_rgba8888_fill")
+        .allowlist_function("gfx_rgba8888_copy_mono4")
+        .allowlist_function("gfx_rgba8888_copy_rgb565")
+        .allowlist_function("gfx_rgba8888_copy_rgba8888")
+        .allowlist_function("gfx_rgba8888_blend_mono4")
+        .allowlist_function("gfx_rgba8888_blend_mono8")
+        .allowlist_function("gfx_mono8_fill")
+        .allowlist_function("gfx_mono8_copy_mono1p")
+        .allowlist_function("gfx_mono8_copy_mono4")
+        .allowlist_function("gfx_mono8_blend_mono1p")
+        .allowlist_function("gfx_mono8_blend_mono4")
+        .allowlist_function("dma2d_wait")
         // fonts
         .allowlist_function("font_height")
         .allowlist_function("font_max_height")
         .allowlist_function("font_baseline")
         .allowlist_function("font_get_glyph")
+        .allowlist_function("font_text_width")
         // uzlib
         .allowlist_function("uzlib_uncompress_init")
         .allowlist_function("uzlib_uncompress")
@@ -327,13 +403,18 @@ fn generate_trezorhal_bindings() {
         // time
         .allowlist_function("hal_delay")
         .allowlist_function("hal_ticks_ms")
+        // toif
+        .allowlist_type("toif_format_t")
         // dma2d
+        .allowlist_function("dma2d_setup_const")
         .allowlist_function("dma2d_setup_4bpp")
         .allowlist_function("dma2d_setup_16bpp")
         .allowlist_function("dma2d_setup_4bpp_over_4bpp")
         .allowlist_function("dma2d_setup_4bpp_over_16bpp")
         .allowlist_function("dma2d_start")
         .allowlist_function("dma2d_start_blend")
+        .allowlist_function("dma2d_start_const")
+        .allowlist_function("dma2d_start_const_multiline")
         .allowlist_function("dma2d_wait_for_transfer")
         //buffers
         .allowlist_function("buffers_get_line_16bpp")
@@ -348,18 +429,26 @@ fn generate_trezorhal_bindings() {
         .allowlist_function("buffers_free_jpeg_work")
         .allowlist_function("buffers_get_blurring")
         .allowlist_function("buffers_free_blurring")
+        .allowlist_function("buffers_get_blurring_totals")
+        .allowlist_function("buffers_free_blurring_totals")
+        .allowlist_var("TEXT_BUFFER_HEIGHT")
         .no_copy("buffer_line_16bpp_t")
         .no_copy("buffer_line_4bpp_t")
         .no_copy("buffer_text_t")
         .no_copy("buffer_jpeg_t")
         .no_copy("buffer_jpeg_work_t")
         .no_copy("buffer_blurring_t")
+        .no_copy("buffer_blurring_totals_t")
         //usb
         .allowlist_function("usb_configured")
         // touch
-        .allowlist_function("touch_read")
+        .allowlist_function("touch_get_event")
         // button
-        .allowlist_function("button_read");
+        .allowlist_function("button_read")
+        // haptic
+        .allowlist_type("haptic_effect_t")
+        .allowlist_function("haptic_play")
+        .allowlist_function("haptic_play_custom");
 
     // Write the bindings to a file in the OUR_DIR.
     bindings
@@ -369,9 +458,40 @@ fn generate_trezorhal_bindings() {
         .unwrap();
 }
 
+fn generate_crypto_bindings() {
+    let out_path = env::var("OUT_DIR").unwrap();
+
+    // Tell cargo to invalidate the built crate whenever the header changes.
+    println!("cargo:rerun-if-changed=crypto.h");
+
+    let bindings = prepare_bindings()
+        .header("crypto.h")
+        // ed25519
+        .allowlist_type("ed25519_signature")
+        .allowlist_type("ed25519_public_key")
+        .allowlist_function("ed25519_cosi_combine_publickeys")
+        // incorrect signature from bindgen, see crypto::ed25519:ffi_override
+        //.allowlist_function("ed25519_sign_open")
+        // sha256
+        .allowlist_var("SHA256_DIGEST_LENGTH")
+        .allowlist_type("SHA256_CTX")
+        .no_copy("SHA256_CTX")
+        .allowlist_function("sha256_Init")
+        .allowlist_function("sha256_Update")
+        .allowlist_function("sha256_Final");
+
+    // Write the bindings to a file in the OUR_DIR.
+    bindings
+        .clang_arg("-fgnuc-version=0") // avoid weirdness with ed25519.h CONST definition
+        .generate()
+        .expect("Unable to generate bindings")
+        .write_to_file(PathBuf::from(out_path).join("crypto.rs"))
+        .unwrap();
+}
+
 fn is_firmware() -> bool {
     let target = env::var("TARGET").unwrap();
-    target.starts_with("thumbv7")
+    target.starts_with("thumbv7") || target.starts_with("thumbv8")
 }
 
 #[cfg(feature = "test")]

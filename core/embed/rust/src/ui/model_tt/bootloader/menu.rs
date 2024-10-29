@@ -1,15 +1,19 @@
-use crate::ui::{
-    component::{Child, Component, Event, EventCtx, Label, Pad},
-    constant::{screen, WIDTH},
-    display::Icon,
-    geometry::{Insets, Point, Rect},
-    model_tt::{
-        bootloader::theme::{
-            button_bld, button_bld_menu, BLD_BG, BUTTON_HEIGHT, CONTENT_PADDING,
-            CORNER_BUTTON_AREA, CORNER_BUTTON_TOUCH_EXPANSION, FIRE24, REFRESH24, TEXT_TITLE,
-            TITLE_AREA, X32,
+use crate::{
+    trezorhal::secbool::{secbool, sectrue},
+    ui::{
+        component::{Child, Component, Event, EventCtx, Label, Pad},
+        constant::{screen, WIDTH},
+        display::Icon,
+        geometry::{Insets, Point, Rect},
+        model_tt::{
+            component::{Button, ButtonMsg::Clicked, IconText},
+            theme::bootloader::{
+                button_bld, button_bld_menu, text_title, BLD_BG, BUTTON_HEIGHT, CONTENT_PADDING,
+                CORNER_BUTTON_AREA, CORNER_BUTTON_TOUCH_EXPANSION, FIRE24, REFRESH24, TITLE_AREA,
+                X32,
+            },
         },
-        component::{Button, ButtonMsg::Clicked, IconText},
+        shape::Renderer,
     },
 };
 
@@ -19,33 +23,39 @@ const BUTTON_SPACING: i16 = 8;
 #[repr(u32)]
 #[derive(Copy, Clone, ToPrimitive)]
 pub enum MenuMsg {
-    Close = 1,
-    Reboot = 2,
-    FactoryReset = 3,
+    Close = 0xAABBCCDD,
+    Reboot = 0x11223344,
+    FactoryReset = 0x55667788,
 }
 
 pub struct Menu {
     bg: Pad,
-    title: Child<Label<&'static str>>,
-    close: Child<Button<&'static str>>,
-    reboot: Child<Button<&'static str>>,
-    reset: Child<Button<&'static str>>,
+    title: Child<Label<'static>>,
+    close: Child<Button>,
+    reboot: Child<Button>,
+    reset: Child<Button>,
 }
 
 impl Menu {
-    pub fn new() -> Self {
+    pub fn new(firmware_present: secbool) -> Self {
         let content_reboot = IconText::new("REBOOT TREZOR", Icon::new(REFRESH24));
         let content_reset = IconText::new("FACTORY RESET", Icon::new(FIRE24));
 
         let mut instance = Self {
             bg: Pad::with_background(BLD_BG),
-            title: Child::new(Label::left_aligned("BOOTLOADER", TEXT_TITLE).vertically_centered()),
+            title: Child::new(
+                Label::left_aligned("BOOTLOADER".into(), text_title(BLD_BG)).vertically_centered(),
+            ),
             close: Child::new(
                 Button::with_icon(Icon::new(X32))
                     .styled(button_bld_menu())
                     .with_expanded_touch_area(Insets::uniform(CORNER_BUTTON_TOUCH_EXPANSION)),
             ),
-            reboot: Child::new(Button::with_icon_and_text(content_reboot).styled(button_bld())),
+            reboot: Child::new(
+                Button::with_icon_and_text(content_reboot)
+                    .styled(button_bld())
+                    .initially_enabled(sectrue == firmware_present),
+            ),
             reset: Child::new(Button::with_icon_and_text(content_reset).styled(button_bld())),
         };
         instance.bg.clear();
@@ -97,6 +107,14 @@ impl Component for Menu {
         self.close.paint();
         self.reboot.paint();
         self.reset.paint();
+    }
+
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        self.bg.render(target);
+        self.title.render(target);
+        self.close.render(target);
+        self.reboot.render(target);
+        self.reset.render(target);
     }
 
     #[cfg(feature = "ui_bounds")]

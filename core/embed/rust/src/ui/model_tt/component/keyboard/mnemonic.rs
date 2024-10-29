@@ -1,9 +1,13 @@
-use crate::ui::{
-    component::{maybe::paint_overlapping, Child, Component, Event, EventCtx, Label, Maybe},
-    geometry::{Alignment2D, Grid, Offset, Rect},
-    model_tt::{
-        component::{Button, ButtonMsg},
-        theme,
+use crate::{
+    strutil::TString,
+    ui::{
+        component::{maybe::paint_overlapping, Child, Component, Event, EventCtx, Label, Maybe},
+        geometry::{Alignment2D, Grid, Offset, Rect},
+        model_tt::{
+            component::{Button, ButtonMsg, Swipe, SwipeDirection},
+            theme,
+        },
+        shape::Renderer,
     },
 };
 
@@ -11,31 +15,39 @@ pub const MNEMONIC_KEY_COUNT: usize = 9;
 
 pub enum MnemonicKeyboardMsg {
     Confirmed,
+    Previous,
 }
 
-pub struct MnemonicKeyboard<T, U> {
+pub struct MnemonicKeyboard<T> {
     /// Initial prompt, displayed on empty input.
-    prompt: Child<Maybe<Label<U>>>,
+    prompt: Child<Maybe<Label<'static>>>,
     /// Backspace button.
-    back: Child<Maybe<Button<&'static str>>>,
+    back: Child<Maybe<Button>>,
     /// Input area, acting as the auto-complete and confirm button.
     input: Child<Maybe<T>>,
     /// Key buttons.
-    keys: [Child<Button<&'static str>>; MNEMONIC_KEY_COUNT],
+    keys: [Child<Button>; MNEMONIC_KEY_COUNT],
+    /// Swipe controller - allowing for going to the previous word.
+    swipe: Swipe,
+    /// Whether going back is allowed (is not on the very first word).
+    can_go_back: bool,
 }
 
-impl<T, U> MnemonicKeyboard<T, U>
+impl<T> MnemonicKeyboard<T>
 where
     T: MnemonicInput,
-    U: AsRef<str>,
 {
-    pub fn new(input: T, prompt: U) -> Self {
+    pub fn new(input: T, prompt: TString<'static>, can_go_back: bool) -> Self {
+        // Input might be already pre-filled
+        let prompt_visible = input.is_empty();
+
         Self {
-            prompt: Child::new(Maybe::visible(
+            prompt: Child::new(Maybe::new(
                 theme::BG,
                 Label::centered(prompt, theme::label_keyboard_prompt()),
+                prompt_visible,
             )),
-            back: Child::new(Maybe::hidden(
+            back: Child::new(Maybe::new(
                 theme::BG,
                 Button::with_icon_blend(
                     theme::IMAGE_BG_BACK_BTN_TALL,
@@ -44,11 +56,14 @@ where
                 )
                 .styled(theme::button_reset())
                 .with_long_press(theme::ERASE_HOLD_DURATION),
+                !prompt_visible,
             )),
-            input: Child::new(Maybe::hidden(theme::BG, input)),
+            input: Child::new(Maybe::new(theme::BG, input, !prompt_visible)),
             keys: T::keys()
-                .map(|t| Button::with_text(t).styled(theme::button_pin()))
+                .map(|t| Button::with_text(t.into()).styled(theme::button_pin()))
                 .map(Child::new),
+            swipe: Swipe::new().right(),
+            can_go_back,
         }
     }
 
@@ -87,10 +102,9 @@ where
     }
 }
 
-impl<T, U> Component for MnemonicKeyboard<T, U>
+impl<T> Component for MnemonicKeyboard<T>
 where
     T: MnemonicInput,
-    U: AsRef<str>,
 {
     type Msg = MnemonicKeyboardMsg;
 
@@ -106,6 +120,7 @@ where
         let prompt_size = self.prompt.inner().inner().max_size();
         let prompt_area = Rect::snap(prompt_center, prompt_size, Alignment2D::CENTER);
 
+        self.swipe.place(bounds);
         self.prompt.place(prompt_area);
         self.back.place(back_area);
         self.input.place(input_area);
@@ -116,6 +131,13 @@ where
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
+        // Swipe will cause going back to the previous word when allowed.
+        if self.can_go_back {
+            if let Some(SwipeDirection::Right) = self.swipe.event(ctx, event) {
+                return Some(MnemonicKeyboardMsg::Previous);
+            }
+        }
+
         match self.input.event(ctx, event) {
             Some(MnemonicInputMsg::Confirmed) => {
                 // Confirmed, bubble up.
@@ -162,6 +184,19 @@ where
         }
     }
 
+    fn render<'s>(&'s self, target: &mut impl Renderer<'s>) {
+        if self.input.inner().inner().is_empty() {
+            self.prompt.render(target);
+        } else {
+            self.input.render(target);
+            self.back.render(target);
+        }
+
+        for btn in &self.keys {
+            btn.render(target);
+        }
+    }
+
     #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.prompt.bounds(sink);
@@ -190,10 +225,9 @@ pub enum MnemonicInputMsg {
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T, U> crate::trace::Trace for MnemonicKeyboard<T, U>
+impl<T> crate::trace::Trace for MnemonicKeyboard<T>
 where
     T: MnemonicInput + crate::trace::Trace,
-    U: AsRef<str>,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
         t.component("MnemonicKeyboard");

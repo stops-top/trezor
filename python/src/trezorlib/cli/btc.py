@@ -167,6 +167,7 @@ def cli() -> None:
     type=int,
     default=2,
 )
+@click.option("-C", "--chunkify", is_flag=True)
 @with_client
 def get_address(
     client: "TrezorClient",
@@ -177,6 +178,7 @@ def get_address(
     multisig_xpub: List[str],
     multisig_threshold: Optional[int],
     multisig_suffix_length: int,
+    chunkify: bool,
 ) -> str:
     """Get address for specified path.
 
@@ -225,12 +227,13 @@ def get_address(
         script_type=script_type,
         multisig=multisig,
         unlock_path=get_unlock_path(address_n),
+        chunkify=chunkify,
     )
 
 
 @cli.command()
 @click.option("-c", "--coin", default=DEFAULT_COIN)
-@click.option("-n", "--address", required=True, help="BIP-32 path, e.g. m/44'/0'/0'")
+@click.option("-n", "--address", required=True, help="BIP-32 path, e.g. m/44h/0h/0h")
 @click.option("-e", "--curve")
 @click.option("-t", "--script-type", type=ChoiceType(INPUT_SCRIPTS))
 @click.option("-d", "--show-display", is_flag=True)
@@ -291,17 +294,6 @@ def _get_descriptor(
         if purpose not in SCRIPT_TYPE_TO_BIP_PURPOSES[script_type]:
             raise ValueError("Invalid script type for account type")
 
-    if script_type == messages.InputScriptType.SPENDADDRESS:
-        fmt = "pkh({})"
-    elif script_type == messages.InputScriptType.SPENDP2SHWITNESS:
-        fmt = "sh(wpkh({}))"
-    elif script_type == messages.InputScriptType.SPENDWITNESS:
-        fmt = "wpkh({})"
-    elif script_type == messages.InputScriptType.SPENDTAPROOT:
-        fmt = "tr({})"
-    else:
-        raise ValueError("Unsupported script type")
-
     coin = coin or DEFAULT_COIN
     if coin == "Bitcoin":
         coin_type = 0
@@ -310,10 +302,10 @@ def _get_descriptor(
     else:
         raise ValueError("Unsupported coin")
 
-    path = f"m/{purpose}'/{coin_type}'/{account}'"
+    path = f"m/{purpose}h/{coin_type}h/{account}h"
     if purpose == PURPOSE_SLIP25:
         if script_type == messages.InputScriptType.SPENDTAPROOT:
-            path += "/1'"
+            path += "/1h"
         else:
             raise ValueError("Unsupported SLIP25 script type")
 
@@ -327,6 +319,21 @@ def _get_descriptor(
         ignore_xpub_magic=True,
         unlock_path=get_unlock_path(n),
     )
+
+    # Starting with core 2.6.5 the descriptor is included in the response.
+    if pub.descriptor is not None:
+        return pub.descriptor
+
+    if script_type == messages.InputScriptType.SPENDADDRESS:
+        fmt = "pkh({})"
+    elif script_type == messages.InputScriptType.SPENDP2SHWITNESS:
+        fmt = "sh(wpkh({}))"
+    elif script_type == messages.InputScriptType.SPENDWITNESS:
+        fmt = "wpkh({})"
+    elif script_type == messages.InputScriptType.SPENDTAPROOT:
+        fmt = "tr({})"
+    else:
+        raise ValueError("Unsupported script type")
 
     fingerprint = pub.root_fingerprint if pub.root_fingerprint is not None else 0
     descriptor = f"[{fingerprint:08x}{path[1:]}]{pub.xpub}/<0;1>/*"
@@ -366,9 +373,10 @@ def get_descriptor(
 
 @cli.command()
 @click.option("-c", "--coin", is_flag=True, hidden=True, expose_value=False)
+@click.option("-C", "--chunkify", is_flag=True)
 @click.argument("json_file", type=click.File())
 @with_client
-def sign_tx(client: "TrezorClient", json_file: TextIO) -> None:
+def sign_tx(client: "TrezorClient", json_file: TextIO, chunkify: bool) -> None:
     """Sign transaction.
 
     Transaction data must be provided in a JSON file. See `transaction-format.md` for
@@ -398,6 +406,7 @@ def sign_tx(client: "TrezorClient", json_file: TextIO) -> None:
         inputs,
         outputs,
         prev_txes=prev_txes,
+        chunkify=chunkify,
         **details,
     )
 
@@ -421,6 +430,7 @@ def sign_tx(client: "TrezorClient", json_file: TextIO) -> None:
     is_flag=True,
     help="Generate Electrum-compatible signature",
 )
+@click.option("-C", "--chunkify", is_flag=True)
 @click.argument("message")
 @with_client
 def sign_message(
@@ -430,13 +440,20 @@ def sign_message(
     message: str,
     script_type: Optional[messages.InputScriptType],
     electrum_compat: bool,
+    chunkify: bool,
 ) -> Dict[str, str]:
     """Sign message using address of given path."""
     address_n = tools.parse_path(address)
     if script_type is None:
         script_type = guess_script_type_from_path(address_n)
     res = btc.sign_message(
-        client, coin, address_n, message, script_type, electrum_compat
+        client,
+        coin,
+        address_n,
+        message,
+        script_type,
+        electrum_compat,
+        chunkify=chunkify,
     )
     return {
         "message": message,
@@ -447,16 +464,24 @@ def sign_message(
 
 @cli.command()
 @click.option("-c", "--coin", default=DEFAULT_COIN)
+@click.option("-C", "--chunkify", is_flag=True)
 @click.argument("address")
 @click.argument("signature")
 @click.argument("message")
 @with_client
 def verify_message(
-    client: "TrezorClient", coin: str, address: str, signature: str, message: str
+    client: "TrezorClient",
+    coin: str,
+    address: str,
+    signature: str,
+    message: str,
+    chunkify: bool,
 ) -> bool:
     """Verify message."""
     signature_bytes = base64.b64decode(signature)
-    return btc.verify_message(client, coin, address, signature_bytes, message)
+    return btc.verify_message(
+        client, coin, address, signature_bytes, message, chunkify=chunkify
+    )
 
 
 #

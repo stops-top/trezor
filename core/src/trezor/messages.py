@@ -17,15 +17,18 @@ def __getattr__(name: str) -> Any:
 if TYPE_CHECKING:
     from typing import TypeGuard
     from trezor.enums import AmountUnit  # noqa: F401
+    from trezor.enums import BackupAvailability  # noqa: F401
     from trezor.enums import BackupType  # noqa: F401
     from trezor.enums import BinanceOrderSide  # noqa: F401
     from trezor.enums import BinanceOrderType  # noqa: F401
     from trezor.enums import BinanceTimeInForce  # noqa: F401
+    from trezor.enums import BootCommand  # noqa: F401
     from trezor.enums import ButtonRequestType  # noqa: F401
     from trezor.enums import Capability  # noqa: F401
     from trezor.enums import CardanoAddressType  # noqa: F401
     from trezor.enums import CardanoCVoteRegistrationFormat  # noqa: F401
     from trezor.enums import CardanoCertificateType  # noqa: F401
+    from trezor.enums import CardanoDRepType  # noqa: F401
     from trezor.enums import CardanoDerivationType  # noqa: F401
     from trezor.enums import CardanoNativeScriptHashDisplayFormat  # noqa: F401
     from trezor.enums import CardanoNativeScriptType  # noqa: F401
@@ -51,7 +54,9 @@ if TYPE_CHECKING:
     from trezor.enums import NEMSupplyChangeType  # noqa: F401
     from trezor.enums import OutputScriptType  # noqa: F401
     from trezor.enums import PinMatrixRequestType  # noqa: F401
-    from trezor.enums import RecoveryDeviceType  # noqa: F401
+    from trezor.enums import RecoveryDeviceInputMethod  # noqa: F401
+    from trezor.enums import RecoveryStatus  # noqa: F401
+    from trezor.enums import RecoveryType  # noqa: F401
     from trezor.enums import RequestType  # noqa: F401
     from trezor.enums import SafetyCheckLevel  # noqa: F401
     from trezor.enums import SdProtectOperationType  # noqa: F401
@@ -65,12 +70,14 @@ if TYPE_CHECKING:
     class BinanceGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -130,6 +137,7 @@ if TYPE_CHECKING:
         memo: "str | None"
         sequence: "int"
         source: "int"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -141,6 +149,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             chain_id: "str | None" = None,
             memo: "str | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -157,12 +166,14 @@ if TYPE_CHECKING:
     class BinanceTransferMsg(protobuf.MessageType):
         inputs: "list[BinanceInputOutput]"
         outputs: "list[BinanceInputOutput]"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             inputs: "list[BinanceInputOutput] | None" = None,
             outputs: "list[BinanceInputOutput] | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -440,6 +451,7 @@ if TYPE_CHECKING:
         node: "HDNodeType"
         xpub: "str"
         root_fingerprint: "int | None"
+        descriptor: "str | None"
 
         def __init__(
             self,
@@ -447,6 +459,7 @@ if TYPE_CHECKING:
             node: "HDNodeType",
             xpub: "str",
             root_fingerprint: "int | None" = None,
+            descriptor: "str | None" = None,
         ) -> None:
             pass
 
@@ -461,6 +474,7 @@ if TYPE_CHECKING:
         multisig: "MultisigRedeemScriptType | None"
         script_type: "InputScriptType"
         ignore_xpub_magic: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -471,6 +485,7 @@ if TYPE_CHECKING:
             multisig: "MultisigRedeemScriptType | None" = None,
             script_type: "InputScriptType | None" = None,
             ignore_xpub_magic: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -534,6 +549,7 @@ if TYPE_CHECKING:
         coin_name: "str"
         script_type: "InputScriptType"
         no_script_type: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -543,6 +559,7 @@ if TYPE_CHECKING:
             coin_name: "str | None" = None,
             script_type: "InputScriptType | None" = None,
             no_script_type: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -571,6 +588,7 @@ if TYPE_CHECKING:
         signature: "bytes"
         message: "bytes"
         coin_name: "str"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -579,6 +597,7 @@ if TYPE_CHECKING:
             signature: "bytes",
             message: "bytes",
             coin_name: "str | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -600,6 +619,7 @@ if TYPE_CHECKING:
         decred_staking_ticket: "bool"
         serialize: "bool"
         coinjoin_request: "CoinJoinRequest | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -617,6 +637,7 @@ if TYPE_CHECKING:
             decred_staking_ticket: "bool | None" = None,
             serialize: "bool | None" = None,
             coinjoin_request: "CoinJoinRequest | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -984,8 +1005,8 @@ if TYPE_CHECKING:
         fee_rate: "int"
         no_fee_threshold: "int"
         min_registrable_amount: "int"
-        mask_public_key: "bytes"
-        signature: "bytes"
+        mask_public_key: "bytes | None"
+        signature: "bytes | None"
 
         def __init__(
             self,
@@ -993,8 +1014,8 @@ if TYPE_CHECKING:
             fee_rate: "int",
             no_fee_threshold: "int",
             min_registrable_amount: "int",
-            mask_public_key: "bytes",
-            signature: "bytes",
+            mask_public_key: "bytes | None" = None,
+            signature: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -1286,6 +1307,7 @@ if TYPE_CHECKING:
         network_id: "int"
         address_parameters: "CardanoAddressParametersType"
         derivation_type: "CardanoDerivationType"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -1295,6 +1317,7 @@ if TYPE_CHECKING:
             address_parameters: "CardanoAddressParametersType",
             derivation_type: "CardanoDerivationType",
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -1372,6 +1395,8 @@ if TYPE_CHECKING:
         has_collateral_return: "bool"
         total_collateral: "int | None"
         reference_inputs_count: "int"
+        chunkify: "bool | None"
+        tag_cbor_sets: "bool"
 
         def __init__(
             self,
@@ -1397,6 +1422,8 @@ if TYPE_CHECKING:
             has_collateral_return: "bool | None" = None,
             total_collateral: "int | None" = None,
             reference_inputs_count: "int | None" = None,
+            chunkify: "bool | None" = None,
+            tag_cbor_sets: "bool | None" = None,
         ) -> None:
             pass
 
@@ -1596,6 +1623,24 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["CardanoPoolParametersType"]:
             return isinstance(msg, cls)
 
+    class CardanoDRep(protobuf.MessageType):
+        type: "CardanoDRepType"
+        key_hash: "bytes | None"
+        script_hash: "bytes | None"
+
+        def __init__(
+            self,
+            *,
+            type: "CardanoDRepType",
+            key_hash: "bytes | None" = None,
+            script_hash: "bytes | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["CardanoDRep"]:
+            return isinstance(msg, cls)
+
     class CardanoTxCertificate(protobuf.MessageType):
         type: "CardanoCertificateType"
         path: "list[int]"
@@ -1603,6 +1648,8 @@ if TYPE_CHECKING:
         pool_parameters: "CardanoPoolParametersType | None"
         script_hash: "bytes | None"
         key_hash: "bytes | None"
+        deposit: "int | None"
+        drep: "CardanoDRep | None"
 
         def __init__(
             self,
@@ -1613,6 +1660,8 @@ if TYPE_CHECKING:
             pool_parameters: "CardanoPoolParametersType | None" = None,
             script_hash: "bytes | None" = None,
             key_hash: "bytes | None" = None,
+            deposit: "int | None" = None,
+            drep: "CardanoDRep | None" = None,
         ) -> None:
             pass
 
@@ -1982,70 +2031,6 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["ECDHSessionKey"]:
             return isinstance(msg, cls)
 
-    class CosiCommit(protobuf.MessageType):
-        address_n: "list[int]"
-
-        def __init__(
-            self,
-            *,
-            address_n: "list[int] | None" = None,
-        ) -> None:
-            pass
-
-        @classmethod
-        def is_type_of(cls, msg: Any) -> TypeGuard["CosiCommit"]:
-            return isinstance(msg, cls)
-
-    class CosiCommitment(protobuf.MessageType):
-        commitment: "bytes"
-        pubkey: "bytes"
-
-        def __init__(
-            self,
-            *,
-            commitment: "bytes",
-            pubkey: "bytes",
-        ) -> None:
-            pass
-
-        @classmethod
-        def is_type_of(cls, msg: Any) -> TypeGuard["CosiCommitment"]:
-            return isinstance(msg, cls)
-
-    class CosiSign(protobuf.MessageType):
-        address_n: "list[int]"
-        data: "bytes"
-        global_commitment: "bytes"
-        global_pubkey: "bytes"
-
-        def __init__(
-            self,
-            *,
-            data: "bytes",
-            global_commitment: "bytes",
-            global_pubkey: "bytes",
-            address_n: "list[int] | None" = None,
-        ) -> None:
-            pass
-
-        @classmethod
-        def is_type_of(cls, msg: Any) -> TypeGuard["CosiSign"]:
-            return isinstance(msg, cls)
-
-    class CosiSignature(protobuf.MessageType):
-        signature: "bytes"
-
-        def __init__(
-            self,
-            *,
-            signature: "bytes",
-        ) -> None:
-            pass
-
-        @classmethod
-        def is_type_of(cls, msg: Any) -> TypeGuard["CosiSignature"]:
-            return isinstance(msg, cls)
-
     class Initialize(protobuf.MessageType):
         session_id: "bytes | None"
         derive_cardano: "bool | None"
@@ -2085,7 +2070,7 @@ if TYPE_CHECKING:
         imported: "bool | None"
         unlocked: "bool | None"
         firmware_present: "bool | None"
-        needs_backup: "bool | None"
+        backup_availability: "BackupAvailability | None"
         flags: "int | None"
         model: "str | None"
         fw_major: "int | None"
@@ -2094,7 +2079,7 @@ if TYPE_CHECKING:
         fw_vendor: "str | None"
         unfinished_backup: "bool | None"
         no_backup: "bool | None"
-        recovery_mode: "bool | None"
+        recovery_status: "RecoveryStatus | None"
         capabilities: "list[Capability]"
         backup_type: "BackupType | None"
         sd_card_present: "bool | None"
@@ -2114,6 +2099,12 @@ if TYPE_CHECKING:
         unit_btconly: "bool | None"
         homescreen_width: "int | None"
         homescreen_height: "int | None"
+        bootloader_locked: "bool | None"
+        language_version_matches: "bool"
+        unit_packaging: "int | None"
+        haptic_feedback: "bool | None"
+        recovery_type: "RecoveryType | None"
+        optiga_sec: "int | None"
 
         def __init__(
             self,
@@ -2135,7 +2126,7 @@ if TYPE_CHECKING:
             imported: "bool | None" = None,
             unlocked: "bool | None" = None,
             firmware_present: "bool | None" = None,
-            needs_backup: "bool | None" = None,
+            backup_availability: "BackupAvailability | None" = None,
             flags: "int | None" = None,
             model: "str | None" = None,
             fw_major: "int | None" = None,
@@ -2144,7 +2135,7 @@ if TYPE_CHECKING:
             fw_vendor: "str | None" = None,
             unfinished_backup: "bool | None" = None,
             no_backup: "bool | None" = None,
-            recovery_mode: "bool | None" = None,
+            recovery_status: "RecoveryStatus | None" = None,
             backup_type: "BackupType | None" = None,
             sd_card_present: "bool | None" = None,
             sd_protection: "bool | None" = None,
@@ -2163,6 +2154,12 @@ if TYPE_CHECKING:
             unit_btconly: "bool | None" = None,
             homescreen_width: "int | None" = None,
             homescreen_height: "int | None" = None,
+            bootloader_locked: "bool | None" = None,
+            language_version_matches: "bool | None" = None,
+            unit_packaging: "int | None" = None,
+            haptic_feedback: "bool | None" = None,
+            recovery_type: "RecoveryType | None" = None,
+            optiga_sec: "int | None" = None,
         ) -> None:
             pass
 
@@ -2197,7 +2194,6 @@ if TYPE_CHECKING:
             return isinstance(msg, cls)
 
     class ApplySettings(protobuf.MessageType):
-        language: "str | None"
         label: "str | None"
         use_passphrase: "bool | None"
         homescreen: "bytes | None"
@@ -2207,11 +2203,11 @@ if TYPE_CHECKING:
         safety_checks: "SafetyCheckLevel | None"
         experimental_features: "bool | None"
         hide_passphrase_from_host: "bool | None"
+        haptic_feedback: "bool | None"
 
         def __init__(
             self,
             *,
-            language: "str | None" = None,
             label: "str | None" = None,
             use_passphrase: "bool | None" = None,
             homescreen: "bytes | None" = None,
@@ -2221,11 +2217,58 @@ if TYPE_CHECKING:
             safety_checks: "SafetyCheckLevel | None" = None,
             experimental_features: "bool | None" = None,
             hide_passphrase_from_host: "bool | None" = None,
+            haptic_feedback: "bool | None" = None,
         ) -> None:
             pass
 
         @classmethod
         def is_type_of(cls, msg: Any) -> TypeGuard["ApplySettings"]:
+            return isinstance(msg, cls)
+
+    class ChangeLanguage(protobuf.MessageType):
+        data_length: "int"
+        show_display: "bool | None"
+
+        def __init__(
+            self,
+            *,
+            data_length: "int",
+            show_display: "bool | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["ChangeLanguage"]:
+            return isinstance(msg, cls)
+
+    class TranslationDataRequest(protobuf.MessageType):
+        data_length: "int"
+        data_offset: "int"
+
+        def __init__(
+            self,
+            *,
+            data_length: "int",
+            data_offset: "int",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["TranslationDataRequest"]:
+            return isinstance(msg, cls)
+
+    class TranslationDataAck(protobuf.MessageType):
+        data_chunk: "bytes"
+
+        def __init__(
+            self,
+            *,
+            data_chunk: "bytes",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["TranslationDataAck"]:
             return isinstance(msg, cls)
 
     class ApplyFlags(protobuf.MessageType):
@@ -2362,6 +2405,36 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["FirmwareHash"]:
             return isinstance(msg, cls)
 
+    class AuthenticateDevice(protobuf.MessageType):
+        challenge: "bytes"
+
+        def __init__(
+            self,
+            *,
+            challenge: "bytes",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["AuthenticateDevice"]:
+            return isinstance(msg, cls)
+
+    class AuthenticityProof(protobuf.MessageType):
+        certificates: "list[bytes]"
+        signature: "bytes"
+
+        def __init__(
+            self,
+            *,
+            signature: "bytes",
+            certificates: "list[bytes] | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["AuthenticityProof"]:
+            return isinstance(msg, cls)
+
     class WipeDevice(protobuf.MessageType):
 
         @classmethod
@@ -2372,7 +2445,6 @@ if TYPE_CHECKING:
         mnemonics: "list[str]"
         pin: "str | None"
         passphrase_protection: "bool | None"
-        language: "str"
         label: "str | None"
         skip_checksum: "bool | None"
         u2f_counter: "int | None"
@@ -2385,7 +2457,6 @@ if TYPE_CHECKING:
             mnemonics: "list[str] | None" = None,
             pin: "str | None" = None,
             passphrase_protection: "bool | None" = None,
-            language: "str | None" = None,
             label: "str | None" = None,
             skip_checksum: "bool | None" = None,
             u2f_counter: "int | None" = None,
@@ -2403,7 +2474,6 @@ if TYPE_CHECKING:
         strength: "int"
         passphrase_protection: "bool | None"
         pin_protection: "bool | None"
-        language: "str"
         label: "str | None"
         u2f_counter: "int | None"
         skip_backup: "bool | None"
@@ -2417,7 +2487,6 @@ if TYPE_CHECKING:
             strength: "int | None" = None,
             passphrase_protection: "bool | None" = None,
             pin_protection: "bool | None" = None,
-            language: "str | None" = None,
             label: "str | None" = None,
             u2f_counter: "int | None" = None,
             skip_backup: "bool | None" = None,
@@ -2431,6 +2500,16 @@ if TYPE_CHECKING:
             return isinstance(msg, cls)
 
     class BackupDevice(protobuf.MessageType):
+        group_threshold: "int | None"
+        groups: "list[Slip39Group]"
+
+        def __init__(
+            self,
+            *,
+            groups: "list[Slip39Group] | None" = None,
+            group_threshold: "int | None" = None,
+        ) -> None:
+            pass
 
         @classmethod
         def is_type_of(cls, msg: Any) -> TypeGuard["BackupDevice"]:
@@ -2460,12 +2539,11 @@ if TYPE_CHECKING:
         word_count: "int | None"
         passphrase_protection: "bool | None"
         pin_protection: "bool | None"
-        language: "str | None"
         label: "str | None"
         enforce_wordlist: "bool | None"
-        type: "RecoveryDeviceType | None"
+        input_method: "RecoveryDeviceInputMethod | None"
         u2f_counter: "int | None"
-        dry_run: "bool | None"
+        type: "RecoveryType"
 
         def __init__(
             self,
@@ -2473,12 +2551,11 @@ if TYPE_CHECKING:
             word_count: "int | None" = None,
             passphrase_protection: "bool | None" = None,
             pin_protection: "bool | None" = None,
-            language: "str | None" = None,
             label: "str | None" = None,
             enforce_wordlist: "bool | None" = None,
-            type: "RecoveryDeviceType | None" = None,
+            input_method: "RecoveryDeviceInputMethod | None" = None,
             u2f_counter: "int | None" = None,
-            dry_run: "bool | None" = None,
+            type: "RecoveryType | None" = None,
         ) -> None:
             pass
 
@@ -2567,6 +2644,18 @@ if TYPE_CHECKING:
             return isinstance(msg, cls)
 
     class RebootToBootloader(protobuf.MessageType):
+        boot_command: "BootCommand"
+        firmware_header: "bytes | None"
+        language_data_length: "int"
+
+        def __init__(
+            self,
+            *,
+            boot_command: "BootCommand | None" = None,
+            firmware_header: "bytes | None" = None,
+            language_data_length: "int | None" = None,
+        ) -> None:
+            pass
 
         @classmethod
         def is_type_of(cls, msg: Any) -> TypeGuard["RebootToBootloader"]:
@@ -2632,6 +2721,36 @@ if TYPE_CHECKING:
 
         @classmethod
         def is_type_of(cls, msg: Any) -> TypeGuard["UnlockBootloader"]:
+            return isinstance(msg, cls)
+
+    class SetBrightness(protobuf.MessageType):
+        value: "int | None"
+
+        def __init__(
+            self,
+            *,
+            value: "int | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SetBrightness"]:
+            return isinstance(msg, cls)
+
+    class Slip39Group(protobuf.MessageType):
+        member_threshold: "int"
+        member_count: "int"
+
+        def __init__(
+            self,
+            *,
+            member_threshold: "int",
+            member_count: "int",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["Slip39Group"]:
             return isinstance(msg, cls)
 
     class DebugLinkDecision(protobuf.MessageType):
@@ -2885,12 +3004,14 @@ if TYPE_CHECKING:
     class EosGetPublicKey(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -2919,6 +3040,7 @@ if TYPE_CHECKING:
         chain_id: "bytes"
         header: "EosTxHeader"
         num_actions: "int"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -2927,6 +3049,7 @@ if TYPE_CHECKING:
             header: "EosTxHeader",
             num_actions: "int",
             address_n: "list[int] | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3612,6 +3735,7 @@ if TYPE_CHECKING:
         address_n: "list[int]"
         show_display: "bool | None"
         encoded_network: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3619,6 +3743,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
             encoded_network: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3652,6 +3777,7 @@ if TYPE_CHECKING:
         chain_id: "int"
         tx_type: "int | None"
         definitions: "EthereumDefinitions | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3667,6 +3793,7 @@ if TYPE_CHECKING:
             data_length: "int | None" = None,
             tx_type: "int | None" = None,
             definitions: "EthereumDefinitions | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3687,6 +3814,7 @@ if TYPE_CHECKING:
         chain_id: "int"
         access_list: "list[EthereumAccessList]"
         definitions: "EthereumDefinitions | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3703,6 +3831,7 @@ if TYPE_CHECKING:
             to: "str | None" = None,
             data_initial_chunk: "bytes | None" = None,
             definitions: "EthereumDefinitions | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3748,6 +3877,7 @@ if TYPE_CHECKING:
         address_n: "list[int]"
         message: "bytes"
         encoded_network: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3755,6 +3885,7 @@ if TYPE_CHECKING:
             message: "bytes",
             address_n: "list[int] | None" = None,
             encoded_network: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3782,6 +3913,7 @@ if TYPE_CHECKING:
         signature: "bytes"
         message: "bytes"
         address: "str"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3789,6 +3921,7 @@ if TYPE_CHECKING:
             signature: "bytes",
             message: "bytes",
             address: "str",
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3935,6 +4068,7 @@ if TYPE_CHECKING:
         account: "int | None"
         minor: "int | None"
         payment_id: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3945,6 +4079,7 @@ if TYPE_CHECKING:
             account: "int | None" = None,
             minor: "int | None" = None,
             payment_id: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4596,6 +4731,7 @@ if TYPE_CHECKING:
         client_version: "int | None"
         hard_fork: "int | None"
         monero_version: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4615,6 +4751,7 @@ if TYPE_CHECKING:
             client_version: "int | None" = None,
             hard_fork: "int | None" = None,
             monero_version: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4700,6 +4837,7 @@ if TYPE_CHECKING:
         address_n: "list[int]"
         network: "int"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4707,6 +4845,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             network: "int | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4738,6 +4877,7 @@ if TYPE_CHECKING:
         supply_change: "NEMMosaicSupplyChange | None"
         aggregate_modification: "NEMAggregateModification | None"
         importance_transfer: "NEMImportanceTransfer | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4751,6 +4891,7 @@ if TYPE_CHECKING:
             supply_change: "NEMMosaicSupplyChange | None" = None,
             aggregate_modification: "NEMAggregateModification | None" = None,
             importance_transfer: "NEMImportanceTransfer | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5023,12 +5164,14 @@ if TYPE_CHECKING:
     class RippleGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5057,6 +5200,7 @@ if TYPE_CHECKING:
         sequence: "int"
         last_ledger_sequence: "int | None"
         payment: "RipplePayment"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -5067,6 +5211,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             flags: "int | None" = None,
             last_ledger_sequence: "int | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5108,6 +5253,134 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["RipplePayment"]:
             return isinstance(msg, cls)
 
+    class SolanaGetPublicKey(protobuf.MessageType):
+        address_n: "list[int]"
+        show_display: "bool | None"
+
+        def __init__(
+            self,
+            *,
+            address_n: "list[int] | None" = None,
+            show_display: "bool | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaGetPublicKey"]:
+            return isinstance(msg, cls)
+
+    class SolanaPublicKey(protobuf.MessageType):
+        public_key: "bytes"
+
+        def __init__(
+            self,
+            *,
+            public_key: "bytes",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaPublicKey"]:
+            return isinstance(msg, cls)
+
+    class SolanaGetAddress(protobuf.MessageType):
+        address_n: "list[int]"
+        show_display: "bool | None"
+        chunkify: "bool | None"
+
+        def __init__(
+            self,
+            *,
+            address_n: "list[int] | None" = None,
+            show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaGetAddress"]:
+            return isinstance(msg, cls)
+
+    class SolanaAddress(protobuf.MessageType):
+        address: "str"
+
+        def __init__(
+            self,
+            *,
+            address: "str",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaAddress"]:
+            return isinstance(msg, cls)
+
+    class SolanaTxTokenAccountInfo(protobuf.MessageType):
+        base_address: "str"
+        token_program: "str"
+        token_mint: "str"
+        token_account: "str"
+
+        def __init__(
+            self,
+            *,
+            base_address: "str",
+            token_program: "str",
+            token_mint: "str",
+            token_account: "str",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaTxTokenAccountInfo"]:
+            return isinstance(msg, cls)
+
+    class SolanaTxAdditionalInfo(protobuf.MessageType):
+        token_accounts_infos: "list[SolanaTxTokenAccountInfo]"
+
+        def __init__(
+            self,
+            *,
+            token_accounts_infos: "list[SolanaTxTokenAccountInfo] | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaTxAdditionalInfo"]:
+            return isinstance(msg, cls)
+
+    class SolanaSignTx(protobuf.MessageType):
+        address_n: "list[int]"
+        serialized_tx: "bytes"
+        additional_info: "SolanaTxAdditionalInfo | None"
+
+        def __init__(
+            self,
+            *,
+            serialized_tx: "bytes",
+            address_n: "list[int] | None" = None,
+            additional_info: "SolanaTxAdditionalInfo | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaSignTx"]:
+            return isinstance(msg, cls)
+
+    class SolanaTxSignature(protobuf.MessageType):
+        signature: "bytes"
+
+        def __init__(
+            self,
+            *,
+            signature: "bytes",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["SolanaTxSignature"]:
+            return isinstance(msg, cls)
+
     class StellarAsset(protobuf.MessageType):
         type: "StellarAssetType"
         code: "str | None"
@@ -5129,12 +5402,14 @@ if TYPE_CHECKING:
     class StellarGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5490,6 +5765,22 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["StellarBumpSequenceOp"]:
             return isinstance(msg, cls)
 
+    class StellarClaimClaimableBalanceOp(protobuf.MessageType):
+        source_account: "str | None"
+        balance_id: "bytes"
+
+        def __init__(
+            self,
+            *,
+            balance_id: "bytes",
+            source_account: "str | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["StellarClaimClaimableBalanceOp"]:
+            return isinstance(msg, cls)
+
     class StellarSignedTx(protobuf.MessageType):
         public_key: "bytes"
         signature: "bytes"
@@ -5509,12 +5800,14 @@ if TYPE_CHECKING:
     class TezosGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5539,12 +5832,14 @@ if TYPE_CHECKING:
     class TezosGetPublicKey(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5575,6 +5870,7 @@ if TYPE_CHECKING:
         delegation: "TezosDelegationOp | None"
         proposal: "TezosProposalOp | None"
         ballot: "TezosBallotOp | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -5587,6 +5883,7 @@ if TYPE_CHECKING:
             delegation: "TezosDelegationOp | None" = None,
             proposal: "TezosProposalOp | None" = None,
             ballot: "TezosBallotOp | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 

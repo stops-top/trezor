@@ -1,389 +1,464 @@
-use crate::{
-    strutil::hexlify,
-    trezorhal::io::io_button_read,
-    ui::{
-        component::{Component, Event, EventCtx, Label, LineBreaking::BreakWordsNoHyphen, Never},
-        constant::SCREEN,
-        display::{self, Color, Font, Icon},
-        event::ButtonEvent,
-        geometry::{Alignment2D, Offset, Rect},
-        util::{from_c_array, from_c_str},
-    },
-};
 use heapless::String;
 
-use super::component::{ResultScreen, WelcomeScreen};
+use crate::{
+    trezorhal::secbool::secbool,
+    ui::{
+        component::{connect::Connect, Label, LineBreaking::BreakWordsNoHyphen},
+        constant,
+        constant::{HEIGHT, SCREEN},
+        display::{self, Color, Font, Icon},
+        geometry::{Alignment2D, Offset, Point},
+        layout::simplified::{run, show, ReturnToC},
+    },
+};
 
-mod confirm;
-mod connect;
+use super::{
+    component::{
+        bl_confirm::{Confirm, ConfirmMsg},
+        ResultScreen, WelcomeScreen,
+    },
+    theme::{
+        bootloader::{BLD_BG, BLD_FG, ICON_ALERT, ICON_SPINNER, ICON_SUCCESS},
+        ICON_ARM_LEFT, ICON_ARM_RIGHT, TEXT_BOLD, TEXT_NORMAL,
+    },
+    ModelTRFeatures,
+};
+
+#[cfg(not(feature = "new_rendering"))]
+use crate::ui::geometry::Rect;
+
+#[cfg(feature = "new_rendering")]
+use crate::ui::{
+    display::toif::Toif, geometry::Alignment, model_tr::cshape, shape, shape::render_on_display,
+};
+
+#[cfg(feature = "new_rendering")]
+use ufmt::uwrite;
+
 mod intro;
 mod menu;
-mod theme;
 mod welcome;
 
-use crate::ui::{
-    constant,
-    constant::HEIGHT,
-    geometry::Point,
-    model_tr::theme::{ICON_ARM_LEFT, ICON_ARM_RIGHT, WHITE},
-};
-use confirm::Confirm;
-use connect::Connect;
+use crate::ui::ui_features::UIFeaturesBootloader;
 use intro::Intro;
 use menu::Menu;
-use theme::{BLD_BG, BLD_FG, ICON_ALERT, ICON_SPINNER, ICON_SUCCESS};
 use welcome::Welcome;
 
 pub type BootloaderString = String<128>;
 
-pub trait ReturnToC {
-    fn return_to_c(self) -> u32;
-}
-
-impl ReturnToC for Never {
+impl ReturnToC for ConfirmMsg {
     fn return_to_c(self) -> u32 {
-        unreachable!()
+        self as u32
     }
 }
 
-impl ReturnToC for () {
-    fn return_to_c(self) -> u32 {
-        0
+impl ModelTRFeatures {
+    #[cfg(not(feature = "new_rendering"))]
+    fn screen_progress(
+        text: &str,
+        text2: &str,
+        progress: u16,
+        initialize: bool,
+        fg_color: Color,
+        bg_color: Color,
+        icon: Option<(Icon, Color)>,
+    ) {
+        if initialize {
+            display::rect_fill(SCREEN, bg_color);
+        }
+
+        let progress = if progress < 20 { 20 } else { progress };
+
+        display::rect_rounded2_partial(
+            Rect::new(
+                SCREEN.top_center() + Offset::new(-9, 3),
+                SCREEN.top_center() + Offset::new(9, 18 + 3),
+            ),
+            fg_color,
+            bg_color,
+            ((100_u32 * progress as u32) / 1000) as _,
+            icon,
+        );
+        display::text_center(
+            SCREEN.center() + Offset::y(8),
+            text,
+            Font::BOLD,
+            fg_color,
+            bg_color,
+        );
+        display::text_center(
+            SCREEN.center() + Offset::y(20),
+            text2,
+            Font::BOLD,
+            fg_color,
+            bg_color,
+        );
+
+        display::refresh();
     }
-}
 
-fn button_eval() -> Option<ButtonEvent> {
-    let event = io_button_read();
-    if event == 0 {
-        return None;
-    }
+    #[cfg(feature = "new_rendering")]
+    fn screen_progress(
+        text: &str,
+        text2: &str,
+        progress: u16,
+        _initialize: bool,
+        fg_color: Color,
+        bg_color: Color,
+        icon: Option<(Icon, Color)>,
+    ) {
+        let progress = if progress < 20 { 20 } else { progress };
 
-    let event_type = event >> 24;
-    let event_btn = event & 0xFFFFFF;
+        display::sync();
 
-    let event = ButtonEvent::new(event_type, event_btn);
+        render_on_display(None, Some(bg_color), |target| {
+            let center = SCREEN.top_center() + Offset::y(12);
 
-    if let Ok(event) = event {
-        return Some(event);
-    }
-    None
-}
+            cshape::LoaderCircular::new(center, progress)
+                .with_color(fg_color)
+                .render(target);
 
-fn run<F>(frame: &mut F) -> u32
-where
-    F: Component,
-    F::Msg: ReturnToC,
-{
-    frame.place(SCREEN);
-    frame.paint();
-    display::refresh();
-
-    while button_eval().is_some() {}
-
-    loop {
-        let event = button_eval();
-        if let Some(e) = event {
-            let mut ctx = EventCtx::new();
-            let msg = frame.event(&mut ctx, Event::Button(e));
-
-            if let Some(message) = msg {
-                return message.return_to_c();
+            if let Some((icon, color)) = icon {
+                shape::ToifImage::new(center, icon.toif)
+                    .with_align(Alignment2D::CENTER)
+                    .with_fg(color)
+                    .render(target);
             }
 
-            frame.paint();
-            display::refresh();
+            shape::Text::new(SCREEN.center() + Offset::y(8), text)
+                .with_align(Alignment::Center)
+                .with_font(Font::BOLD)
+                .with_fg(fg_color)
+                .render(target);
+
+            shape::Text::new(SCREEN.center() + Offset::y(20), text2)
+                .with_align(Alignment::Center)
+                .with_font(Font::BOLD)
+                .with_fg(fg_color)
+                .render(target);
+        });
+
+        display::refresh();
+    }
+}
+
+impl UIFeaturesBootloader for ModelTRFeatures {
+    fn screen_welcome() {
+        let mut frame = Welcome::new();
+        show(&mut frame, true);
+    }
+
+    #[cfg(not(feature = "new_rendering"))]
+    fn bld_continue_label(bg_color: Color) {
+        display::text_center(
+            Point::new(constant::WIDTH / 2, HEIGHT - 2),
+            "CONTINUE",
+            Font::NORMAL,
+            BLD_FG,
+            bg_color,
+        );
+        ICON_ARM_LEFT.draw(
+            Point::new(constant::WIDTH / 2 - 36, HEIGHT - 6),
+            Alignment2D::TOP_LEFT,
+            BLD_FG,
+            bg_color,
+        );
+        ICON_ARM_RIGHT.draw(
+            Point::new(constant::WIDTH / 2 + 25, HEIGHT - 6),
+            Alignment2D::TOP_LEFT,
+            BLD_FG,
+            bg_color,
+        );
+    }
+
+    fn screen_install_success(restart_seconds: u8, _initial_setup: bool, complete_draw: bool) {
+        let mut reboot_msg = BootloaderString::new();
+
+        if restart_seconds >= 1 {
+            unwrap!(reboot_msg.push_str("Restarting in "));
+            // in practice, restart_seconds is 5 or less so this is fine
+            let seconds_char = b'0' + restart_seconds % 10;
+            unwrap!(reboot_msg.push(seconds_char as char));
+        } else {
+            unwrap!(reboot_msg.push_str("Reconnect the device"));
         }
-    }
-}
 
-fn show<F>(frame: &mut F)
-where
-    F: Component,
-{
-    frame.place(SCREEN);
-    display::sync();
-    frame.paint();
-    display::refresh();
-}
+        let title = Label::centered("Firmware installed".into(), TEXT_BOLD).vertically_centered();
 
-#[no_mangle]
-extern "C" fn screen_install_confirm(
-    vendor_str: *const cty::c_char,
-    vendor_str_len: u8,
-    version: *const cty::c_char,
-    fingerprint: *const cty::uint8_t,
-    should_keep_seed: bool,
-    is_newvendor: bool,
-    version_cmp: cty::c_int,
-) -> u32 {
-    let text = unwrap!(unsafe { from_c_array(vendor_str, vendor_str_len as usize) });
-    let version = unwrap!(unsafe { from_c_str(version) });
+        let content =
+            Label::centered(reboot_msg.as_str().into(), TEXT_NORMAL).vertically_centered();
 
-    let mut fingerprint_buffer: [u8; 64] = [0; 64];
-    let fingerprint_str = unsafe {
-        let fingerprint_slice = core::slice::from_raw_parts(fingerprint as *const u8, 32);
-        hexlify(fingerprint_slice, &mut fingerprint_buffer);
-        core::str::from_utf8_unchecked(fingerprint_buffer.as_ref())
-    };
-
-    let mut version_str: BootloaderString = String::new();
-    unwrap!(version_str.push_str("Firmware version "));
-    unwrap!(version_str.push_str(version));
-    unwrap!(version_str.push_str("\nby "));
-    unwrap!(version_str.push_str(text));
-
-    let title_str = if is_newvendor {
-        "CHANGE FW VENDOR"
-    } else if version_cmp > 0 {
-        "UPDATE FIRMWARE"
-    } else if version_cmp == 0 {
-        "REINSTALL FW"
-    } else {
-        "DOWNGRADE FW"
-    };
-
-    let message =
-        Label::left_aligned(version_str.as_str(), theme::TEXT_NORMAL).vertically_centered();
-    let fingerprint = Label::left_aligned(
-        fingerprint_str,
-        theme::TEXT_NORMAL.with_line_breaking(BreakWordsNoHyphen),
-    )
-    .vertically_centered();
-
-    let alert = (!should_keep_seed).then_some(Label::left_aligned(
-        "Seed will be erased!",
-        theme::TEXT_NORMAL,
-    ));
-
-    let mut frame = Confirm::new(BLD_BG, title_str, message, alert, "INSTALL", false)
-        .with_info_screen("FW FINGERPRINT", fingerprint);
-    run(&mut frame)
-}
-
-#[no_mangle]
-extern "C" fn screen_wipe_confirm() -> u32 {
-    let message = Label::left_aligned("Seed and firmware will be erased!", theme::TEXT_NORMAL)
-        .vertically_centered();
-
-    let mut frame = Confirm::new(BLD_BG, "FACTORY RESET", message, None, "RESET", false);
-
-    run(&mut frame)
-}
-
-#[no_mangle]
-extern "C" fn screen_unlock_bootloader_confirm() -> u32 {
-    let message = Label::left_aligned("This action cannot be undone!", theme::TEXT_NORMAL)
-        .vertically_centered();
-
-    let mut frame = Confirm::new(BLD_BG, "UNLOCK BOOTLOADER?", message, None, "UNLOCK", true);
-
-    run(&mut frame)
-}
-
-#[no_mangle]
-extern "C" fn screen_unlock_bootloader_success() {
-    let title = Label::centered("Bootloader unlocked", theme::TEXT_BOLD).vertically_centered();
-
-    let content =
-        Label::centered("Please reconnect the\ndevice", theme::TEXT_NORMAL).vertically_centered();
-
-    let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_SPINNER, title, content, true);
-    show(&mut frame);
-}
-
-#[no_mangle]
-extern "C" fn screen_menu(_bld_version: *const cty::c_char) -> u32 {
-    run(&mut Menu::new())
-}
-
-#[no_mangle]
-extern "C" fn screen_intro(
-    bld_version: *const cty::c_char,
-    vendor_str: *const cty::c_char,
-    vendor_str_len: u8,
-    version: *const cty::c_char,
-) -> u32 {
-    let vendor = unwrap!(unsafe { from_c_array(vendor_str, vendor_str_len as usize) });
-    let version = unwrap!(unsafe { from_c_str(version) });
-    let bld_version = unwrap!(unsafe { from_c_str(bld_version) });
-
-    let mut title_str: BootloaderString = String::new();
-    unwrap!(title_str.push_str("BOOTLOADER "));
-    unwrap!(title_str.push_str(bld_version));
-
-    let mut version_str: BootloaderString = String::new();
-    unwrap!(version_str.push_str("Firmware version "));
-    unwrap!(version_str.push_str(version));
-    unwrap!(version_str.push_str("\nby "));
-    unwrap!(version_str.push_str(vendor));
-
-    let mut frame = Intro::new(title_str.as_str(), version_str.as_str());
-    run(&mut frame)
-}
-
-fn screen_progress(
-    text: &str,
-    text2: &str,
-    progress: u16,
-    initialize: bool,
-    fg_color: Color,
-    bg_color: Color,
-    icon: Option<(Icon, Color)>,
-) {
-    if initialize {
-        display::rect_fill(SCREEN, bg_color);
+        let mut frame =
+            ResultScreen::new(BLD_FG, BLD_BG, ICON_SPINNER, title, content, complete_draw);
+        show(&mut frame, false);
     }
 
-    let progress = if progress < 20 { 20 } else { progress };
+    fn screen_install_fail() {
+        let title = Label::centered("Install failed".into(), TEXT_BOLD).vertically_centered();
 
-    display::rect_rounded2_partial(
-        Rect::new(
-            SCREEN.top_center() + Offset::new(-9, 3),
-            SCREEN.top_center() + Offset::new(9, 18 + 3),
-        ),
-        fg_color,
-        bg_color,
-        ((100_u32 * progress as u32) / 1000) as _,
-        icon,
-    );
-    display::text_center(
-        SCREEN.center() + Offset::y(8),
-        text,
-        Font::BOLD,
-        fg_color,
-        bg_color,
-    );
-    display::text_center(
-        SCREEN.center() + Offset::y(20),
-        text2,
-        Font::BOLD,
-        fg_color,
-        bg_color,
-    );
+        let content = Label::centered("Please reconnect\nthe device".into(), TEXT_NORMAL)
+            .vertically_centered();
 
-    display::refresh();
-}
+        let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_ALERT, title, content, true);
+        show(&mut frame, false);
+    }
 
-#[no_mangle]
-extern "C" fn screen_install_progress(progress: u16, initialize: bool, _initial_setup: bool) {
-    screen_progress(
-        "Installing",
-        "firmware",
-        progress,
-        initialize,
-        BLD_FG,
-        BLD_BG,
-        Some((ICON_SUCCESS, BLD_FG)),
-    );
-}
+    fn screen_install_confirm(
+        vendor: &str,
+        version: &str,
+        fingerprint: &str,
+        should_keep_seed: bool,
+        is_newvendor: bool,
+        version_cmp: i32,
+    ) -> u32 {
+        let mut version_str: BootloaderString = String::new();
+        unwrap!(version_str.push_str("Firmware version "));
+        unwrap!(version_str.push_str(version));
+        unwrap!(version_str.push_str("\nby "));
+        unwrap!(version_str.push_str(vendor));
 
-#[no_mangle]
-extern "C" fn screen_wipe_progress(progress: u16, initialize: bool) {
-    screen_progress(
-        "Resetting",
-        "Trezor",
-        progress,
-        initialize,
-        BLD_FG,
-        BLD_BG,
-        Some((ICON_SUCCESS, BLD_FG)),
-    );
-}
+        let title_str = if is_newvendor {
+            "CHANGE FW VENDOR"
+        } else if version_cmp > 0 {
+            "UPDATE FIRMWARE"
+        } else if version_cmp == 0 {
+            "REINSTALL FW"
+        } else {
+            "DOWNGRADE FW"
+        };
 
-#[no_mangle]
-extern "C" fn screen_connect() {
-    let mut frame = Connect::new("Waiting for host...");
-    show(&mut frame);
-}
+        let message =
+            Label::left_aligned(version_str.as_str().into(), TEXT_NORMAL).vertically_centered();
+        let fingerprint = Label::left_aligned(
+            fingerprint.into(),
+            TEXT_NORMAL.with_line_breaking(BreakWordsNoHyphen),
+        )
+        .vertically_centered();
 
-#[no_mangle]
-extern "C" fn screen_wipe_success() {
-    let title = Label::centered("Trezor Reset", theme::TEXT_BOLD).vertically_centered();
+        let alert = (!should_keep_seed).then_some(Label::left_aligned(
+            "Seed will be erased!".into(),
+            TEXT_NORMAL,
+        ));
 
-    let content =
-        Label::centered("Reconnect\nthe device", theme::TEXT_NORMAL).vertically_centered();
+        let mut frame = Confirm::new(
+            BLD_BG,
+            title_str.into(),
+            message,
+            alert,
+            "INSTALL".into(),
+            false,
+        )
+        .with_info_screen("FW FINGERPRINT".into(), fingerprint);
+        run(&mut frame)
+    }
 
-    let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_SPINNER, title, content, true);
-    show(&mut frame);
-}
+    fn screen_wipe_confirm() -> u32 {
+        let message = Label::left_aligned("Seed and firmware will be erased!".into(), TEXT_NORMAL)
+            .vertically_centered();
 
-#[no_mangle]
-extern "C" fn screen_wipe_fail() {
-    let title = Label::centered("Reset failed", theme::TEXT_BOLD).vertically_centered();
+        let mut frame = Confirm::new(
+            BLD_BG,
+            "FACTORY RESET".into(),
+            message,
+            None,
+            "RESET".into(),
+            false,
+        );
 
-    let content =
-        Label::centered("Please reconnect\nthe device", theme::TEXT_NORMAL).vertically_centered();
+        run(&mut frame)
+    }
 
-    let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_ALERT, title, content, true);
-    show(&mut frame);
-}
+    fn screen_unlock_bootloader_confirm() -> u32 {
+        let message = Label::left_aligned("This action cannot be undone!".into(), TEXT_NORMAL)
+            .vertically_centered();
 
-#[no_mangle]
-extern "C" fn screen_boot_empty(_fading: bool) {
-    display::rect_fill(SCREEN, BLD_BG);
+        let mut frame = Confirm::new(
+            BLD_BG,
+            "UNLOCK BOOTLOADER?".into(),
+            message,
+            None,
+            "UNLOCK".into(),
+            true,
+        );
 
-    let mut frame = WelcomeScreen::new(true);
-    show(&mut frame);
-}
+        run(&mut frame)
+    }
 
-#[no_mangle]
-extern "C" fn screen_install_fail() {
-    let title = Label::centered("Install failed", theme::TEXT_BOLD).vertically_centered();
+    fn screen_unlock_bootloader_success() {
+        let title = Label::centered("Bootloader unlocked".into(), TEXT_BOLD).vertically_centered();
 
-    let content =
-        Label::centered("Please reconnect\nthe device", theme::TEXT_NORMAL).vertically_centered();
+        let content = Label::centered("Please reconnect the\ndevice".into(), TEXT_NORMAL)
+            .vertically_centered();
 
-    let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_ALERT, title, content, true);
-    show(&mut frame);
-}
+        let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_SPINNER, title, content, true);
+        show(&mut frame, false);
+    }
 
-#[no_mangle]
-extern "C" fn screen_install_success(
-    reboot_msg: *const cty::c_char,
-    _initial_setup: bool,
-    complete_draw: bool,
-) {
-    let msg = unwrap!(unsafe { from_c_str(reboot_msg) });
+    fn screen_menu(firmware_present: secbool) -> u32 {
+        run(&mut Menu::new(firmware_present))
+    }
 
-    let title = Label::centered("Firmware installed", theme::TEXT_BOLD).vertically_centered();
+    fn screen_intro(bld_version: &str, vendor: &str, version: &str, fw_ok: bool) -> u32 {
+        let mut title_str: BootloaderString = String::new();
+        unwrap!(title_str.push_str("BOOTLOADER "));
+        unwrap!(title_str.push_str(bld_version));
 
-    let content = Label::centered(msg, theme::TEXT_NORMAL).vertically_centered();
+        let mut version_str: BootloaderString = String::new();
+        unwrap!(version_str.push_str("Firmware version "));
+        unwrap!(version_str.push_str(version));
+        unwrap!(version_str.push_str("\nby "));
+        unwrap!(version_str.push_str(vendor));
 
-    let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_SPINNER, title, content, complete_draw);
-    show(&mut frame);
-}
+        let mut frame = Intro::new(
+            title_str.as_str().into(),
+            version_str.as_str().into(),
+            fw_ok,
+        );
+        run(&mut frame)
+    }
 
-#[no_mangle]
-extern "C" fn screen_welcome() {
-    let mut frame = Welcome::new();
-    show(&mut frame);
-}
+    fn screen_boot_stage_1(_fading: bool) {
+        #[cfg(not(feature = "new_rendering"))]
+        display::rect_fill(SCREEN, BLD_BG);
 
-#[no_mangle]
-extern "C" fn screen_welcome_model() {
-    let mut frame = WelcomeScreen::new(false);
-    show(&mut frame);
-}
+        let mut frame = WelcomeScreen::new(true);
+        show(&mut frame, false);
+    }
 
-#[no_mangle]
-extern "C" fn bld_continue_label(bg_color: cty::uint16_t) {
-    display::text_center(
-        Point::new(constant::WIDTH / 2, HEIGHT - 2),
-        "CONTINUE",
-        Font::NORMAL,
-        WHITE,
-        Color::from_u16(bg_color),
-    );
-    ICON_ARM_LEFT.draw(
-        Point::new(constant::WIDTH / 2 - 36, HEIGHT - 6),
-        Alignment2D::TOP_LEFT,
-        WHITE,
-        Color::from_u16(bg_color),
-    );
-    ICON_ARM_RIGHT.draw(
-        Point::new(constant::WIDTH / 2 + 25, HEIGHT - 6),
-        Alignment2D::TOP_LEFT,
-        WHITE,
-        Color::from_u16(bg_color),
-    );
+    fn screen_wipe_progress(progress: u16, initialize: bool) {
+        Self::screen_progress(
+            "Resetting",
+            "Trezor",
+            progress,
+            initialize,
+            BLD_FG,
+            BLD_BG,
+            Some((ICON_SUCCESS, BLD_FG)),
+        );
+    }
+
+    fn screen_install_progress(progress: u16, initialize: bool, _initial_setup: bool) {
+        Self::screen_progress(
+            "Installing",
+            "firmware",
+            progress,
+            initialize,
+            BLD_FG,
+            BLD_BG,
+            Some((ICON_SUCCESS, BLD_FG)),
+        );
+    }
+
+    fn screen_connect(_initial_setup: bool) {
+        let mut frame = Connect::new("Waiting for host...", BLD_FG, BLD_BG);
+        show(&mut frame, false);
+    }
+
+    fn screen_wipe_success() {
+        let title = Label::centered("Trezor Reset".into(), TEXT_BOLD).vertically_centered();
+
+        let content = Label::centered("Please reconnect\nthe device".into(), TEXT_NORMAL)
+            .vertically_centered();
+
+        let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_SPINNER, title, content, true);
+        show(&mut frame, false);
+    }
+
+    fn screen_wipe_fail() {
+        let title = Label::centered("Reset failed".into(), TEXT_BOLD).vertically_centered();
+
+        let content = Label::centered("Please reconnect\nthe device".into(), TEXT_NORMAL)
+            .vertically_centered();
+
+        let mut frame = ResultScreen::new(BLD_FG, BLD_BG, ICON_ALERT, title, content, true);
+        show(&mut frame, false);
+    }
+
+    #[cfg(feature = "new_rendering")]
+    fn screen_boot(
+        _warning: bool,
+        vendor_str: Option<&str>,
+        version: [u8; 4],
+        vendor_img: &'static [u8],
+        wait: i32,
+    ) {
+        display::sync();
+
+        render_on_display(None, Some(BLD_BG), |target| {
+            // Draw vendor image if it's valid and has size of 24x24
+            if let Ok(toif) = Toif::new(vendor_img) {
+                if (toif.width() == 24) && (toif.height() == 24) {
+                    let pos = Point::new((constant::WIDTH - 22) / 2, 0);
+                    shape::ToifImage::new(pos, toif)
+                        .with_align(Alignment2D::TOP_CENTER)
+                        .with_fg(BLD_FG)
+                        .render(target);
+                }
+            }
+
+            // Draw vendor string if present
+            if let Some(text) = vendor_str {
+                let pos = Point::new(constant::WIDTH / 2, 36);
+                shape::Text::new(pos, text)
+                    .with_align(Alignment::Center)
+                    .with_font(Font::NORMAL)
+                    .with_fg(BLD_FG) //COLOR_BL_BG
+                    .render(target);
+
+                let pos = Point::new(constant::WIDTH / 2, 46);
+
+                let mut version_text: BootloaderString = String::new();
+                unwrap!(uwrite!(
+                    version_text,
+                    "{}.{}.{}",
+                    version[0],
+                    version[1],
+                    version[2]
+                ));
+
+                shape::Text::new(pos, version_text.as_str())
+                    .with_align(Alignment::Center)
+                    .with_font(Font::NORMAL)
+                    .with_fg(BLD_FG)
+                    .render(target);
+            }
+
+            // Draw a message
+            match wait.cmp(&0) {
+                core::cmp::Ordering::Equal => {}
+                core::cmp::Ordering::Greater => {
+                    let mut text: BootloaderString = String::new();
+                    unwrap!(uwrite!(text, "starting in {} s", wait));
+
+                    let pos = Point::new(constant::WIDTH / 2, HEIGHT - 5);
+                    shape::Text::new(pos, text.as_str())
+                        .with_align(Alignment::Center)
+                        .with_font(Font::NORMAL)
+                        .with_fg(BLD_FG)
+                        .render(target);
+                }
+                core::cmp::Ordering::Less => {
+                    let pos = Point::new(constant::WIDTH / 2, HEIGHT - 2);
+                    shape::Text::new(pos, "CONTINUE")
+                        .with_align(Alignment::Center)
+                        .with_fg(BLD_FG)
+                        .render(target);
+
+                    let pos = Point::new(constant::WIDTH / 2 - 36, HEIGHT - 6);
+                    shape::ToifImage::new(pos, ICON_ARM_LEFT.toif)
+                        .with_align(Alignment2D::TOP_LEFT)
+                        .with_fg(BLD_FG)
+                        .render(target);
+
+                    let pos = Point::new(constant::WIDTH / 2 + 25, HEIGHT - 6);
+                    shape::ToifImage::new(pos, ICON_ARM_RIGHT.toif)
+                        .with_align(Alignment2D::TOP_LEFT)
+                        .with_fg(BLD_FG)
+                        .render(target);
+                }
+            }
+        });
+
+        display::refresh();
+    }
 }

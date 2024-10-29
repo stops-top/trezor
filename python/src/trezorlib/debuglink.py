@@ -44,7 +44,7 @@ from typing import (
 from mnemonic import Mnemonic
 from typing_extensions import Literal
 
-from . import mapping, messages, protobuf
+from . import mapping, messages, models, protobuf
 from .client import TrezorClient
 from .exceptions import TrezorFailure
 from .log import DUMP_BYTES
@@ -171,26 +171,31 @@ class LayoutContent(UnstructuredJSONReader):
 
         return visible
 
+    def _get_str_or_dict_text(self, key: str) -> str:
+        value = self.find_unique_value_by_key(key, "")
+        if isinstance(value, dict):
+            return value["text"]
+        return value
+
     def title(self) -> str:
-        """Getting text that is displayed as a title."""
+        """Getting text that is displayed as a title and potentially subtitle."""
         # There could be possibly subtitle as well
         title_parts: List[str] = []
 
-        def _get_str_or_dict_text(key: str) -> str:
-            value = self.find_unique_value_by_key(key, "")
-            if isinstance(value, dict):
-                return value["text"]
-            return value
-
-        title = _get_str_or_dict_text("title")
+        title = self._get_str_or_dict_text("title")
         if title:
             title_parts.append(title)
 
-        subtitle = _get_str_or_dict_text("subtitle")
+        subtitle = self.subtitle()
         if subtitle:
             title_parts.append(subtitle)
 
         return "\n".join(title_parts)
+
+    def subtitle(self) -> str:
+        """Getting text that is displayed as a subtitle."""
+        subtitle = self._get_str_or_dict_text("subtitle")
+        return subtitle
 
     def text_content(self) -> str:
         """What is on the screen, in one long string, so content can be
@@ -355,6 +360,12 @@ class LayoutContent(UnstructuredJSONReader):
             choice_obj.get(choice, {}).get("content", "") for choice in choice_keys
         )
 
+    def footer(self) -> str:
+        footer = self.find_unique_object_with_key_and_value("component", "Footer")
+        if not footer:
+            return ""
+        return footer.get("description", "") + " " + footer.get("instruction", "")
+
 
 def multipage_content(layouts: List[LayoutContent]) -> str:
     """Get overall content from multiple-page layout."""
@@ -368,7 +379,7 @@ class DebugLink:
         self.mapping = mapping.DEFAULT_MAPPING
 
         # To be set by TrezorClientDebugLink (is not known during creation time)
-        self.model: Optional[str] = None
+        self.model: Optional[models.TrezorModel] = None
         self.version: Tuple[int, int, int] = (0, 0, 0)
 
         # Where screenshots are being saved
@@ -424,9 +435,16 @@ class DebugLink:
             f"received type {msg_type} ({len(msg_bytes)} bytes): {msg_bytes.hex()}",
         )
         msg = self.mapping.decode(ret_type, ret_bytes)
+
+        # Collapse tokens to make log use less lines.
+        msg_for_log = msg
+        if isinstance(msg, (messages.DebugLinkState, messages.DebugLinkLayout)):
+            msg_for_log = deepcopy(msg)
+            msg_for_log.tokens = ["".join(msg_for_log.tokens)]
+
         LOG.debug(
-            f"received message: {msg.__class__.__name__}",
-            extra={"protobuf": msg},
+            f"received message: {msg_for_log.__class__.__name__}",
+            extra={"protobuf": msg_for_log},
         )
         return msg
 
@@ -452,7 +470,7 @@ class DebugLink:
 
     def reset_debug_events(self) -> None:
         # Only supported on TT and above certain version
-        if self.model in ("T", "R") and not self.legacy_debug:
+        if (self.model is not models.T1B1) and not self.legacy_debug:
             return self._call(messages.DebugLinkResetDebugEvents())
         return None
 
@@ -565,12 +583,10 @@ class DebugLink:
     # they will always return `LayoutContent` and we do not need to assert `is not None`.
 
     @overload
-    def click(self, click: Tuple[int, int]) -> None:
-        ...
+    def click(self, click: Tuple[int, int]) -> None: ...
 
     @overload
-    def click(self, click: Tuple[int, int], wait: Literal[True]) -> LayoutContent:
-        ...
+    def click(self, click: Tuple[int, int], wait: Literal[True]) -> LayoutContent: ...
 
     def click(
         self, click: Tuple[int, int], wait: bool = False
@@ -602,34 +618,28 @@ class DebugLink:
         return self.input(swipe=messages.DebugSwipeDirection.DOWN, wait=wait)
 
     @overload
-    def swipe_right(self) -> None:
-        ...
+    def swipe_right(self) -> None: ...
 
     @overload
-    def swipe_right(self, wait: Literal[True]) -> LayoutContent:
-        ...
+    def swipe_right(self, wait: Literal[True]) -> LayoutContent: ...
 
     def swipe_right(self, wait: bool = False) -> Union[LayoutContent, None]:
         return self.input(swipe=messages.DebugSwipeDirection.RIGHT, wait=wait)
 
     @overload
-    def swipe_left(self) -> None:
-        ...
+    def swipe_left(self) -> None: ...
 
     @overload
-    def swipe_left(self, wait: Literal[True]) -> LayoutContent:
-        ...
+    def swipe_left(self, wait: Literal[True]) -> LayoutContent: ...
 
     def swipe_left(self, wait: bool = False) -> Union[LayoutContent, None]:
         return self.input(swipe=messages.DebugSwipeDirection.LEFT, wait=wait)
 
     @overload
-    def press_left(self) -> None:
-        ...
+    def press_left(self) -> None: ...
 
     @overload
-    def press_left(self, wait: Literal[True]) -> LayoutContent:
-        ...
+    def press_left(self, wait: Literal[True]) -> LayoutContent: ...
 
     def press_left(self, wait: bool = False) -> Optional[LayoutContent]:
         return self.input(
@@ -637,25 +647,30 @@ class DebugLink:
         )
 
     @overload
-    def press_middle(self) -> None:
-        ...
+    def press_middle(self) -> None: ...
 
     @overload
-    def press_middle(self, wait: Literal[True]) -> LayoutContent:
-        ...
+    def press_middle(self, wait: Literal[True]) -> LayoutContent: ...
 
     def press_middle(self, wait: bool = False) -> Optional[LayoutContent]:
         return self.input(
             physical_button=messages.DebugPhysicalButton.MIDDLE_BTN, wait=wait
         )
 
-    @overload
-    def press_right(self) -> None:
-        ...
+    def press_middle_htc(
+        self, hold_ms: int, extra_ms: int = 200
+    ) -> Optional[LayoutContent]:
+        return self.press_htc(
+            button=messages.DebugPhysicalButton.MIDDLE_BTN,
+            hold_ms=hold_ms,
+            extra_ms=extra_ms,
+        )
 
     @overload
-    def press_right(self, wait: Literal[True]) -> LayoutContent:
-        ...
+    def press_right(self) -> None: ...
+
+    @overload
+    def press_right(self, wait: Literal[True]) -> LayoutContent: ...
 
     def press_right(self, wait: bool = False) -> Optional[LayoutContent]:
         return self.input(
@@ -665,9 +680,18 @@ class DebugLink:
     def press_right_htc(
         self, hold_ms: int, extra_ms: int = 200
     ) -> Optional[LayoutContent]:
+        return self.press_htc(
+            button=messages.DebugPhysicalButton.RIGHT_BTN,
+            hold_ms=hold_ms,
+            extra_ms=extra_ms,
+        )
+
+    def press_htc(
+        self, button: messages.DebugPhysicalButton, hold_ms: int, extra_ms: int = 200
+    ) -> Optional[LayoutContent]:
         hold_ms = hold_ms + extra_ms  # safety margin
         result = self.input(
-            physical_button=messages.DebugPhysicalButton.RIGHT_BTN,
+            physical_button=button,
             hold_ms=hold_ms,
         )
         # sleeping little longer for UI to update
@@ -685,7 +709,7 @@ class DebugLink:
     ) -> None:
         self.screenshot_recording_dir = directory
         # Different recording logic between core and legacy
-        if self.model in ("T", "R"):
+        if self.model is not models.T1B1:
             self._call(
                 messages.DebugLinkRecordScreen(
                     target_directory=directory, refresh_index=refresh_index
@@ -699,7 +723,7 @@ class DebugLink:
     def stop_recording(self) -> None:
         self.screenshot_recording_dir = None
         # Different recording logic between TT and T1
-        if self.model in ("T", "R"):
+        if self.model is not models.T1B1:
             self._call(messages.DebugLinkRecordScreen(target_directory=None))
         else:
             self.t1_take_screenshots = False
@@ -726,7 +750,7 @@ class DebugLink:
 
         TT handles them differently, see debuglink.start_recording.
         """
-        if self.model == "1" and self.t1_take_screenshots:
+        if self.model is models.T1B1 and self.t1_take_screenshots:
             self.save_screenshot_for_t1()
 
     def save_screenshot_for_t1(self) -> None:
@@ -791,6 +815,25 @@ class DebugUI:
             Generator[None, messages.ButtonRequest, None], object, None
         ] = None
 
+    def _default_input_flow(self, br: messages.ButtonRequest) -> None:
+        if br.code == messages.ButtonRequestType.PinEntry:
+            self.debuglink.input(self.get_pin())
+        else:
+            # Paginating (going as further as possible) and pressing Yes
+            if br.pages is not None:
+                for _ in range(br.pages - 1):
+                    self.debuglink.swipe_up(wait=True)
+            if self.debuglink.model is models.T3T1:
+                layout = self.debuglink.read_layout()
+                if "PromptScreen" in layout.all_components():
+                    self.debuglink.press_yes()
+                elif "SwipeContent" in layout.all_components():
+                    self.debuglink.swipe_up()
+                else:
+                    self.debuglink.press_yes()
+            else:
+                self.debuglink.press_yes()
+
     def button_request(self, br: messages.ButtonRequest) -> None:
         self.debuglink.take_t1_screenshot_if_relevant()
 
@@ -801,14 +844,7 @@ class DebugUI:
             # recording their screens that way (as well as
             # possible swipes below).
             self.debuglink.save_current_screen_if_relevant(wait=True)
-            if br.code == messages.ButtonRequestType.PinEntry:
-                self.debuglink.input(self.get_pin())
-            else:
-                # Paginating (going as further as possible) and pressing Yes
-                if br.pages is not None:
-                    for _ in range(br.pages - 1):
-                        self.debuglink.swipe_up(wait=True)
-                self.debuglink.press_yes()
+            self._default_input_flow(br)
         elif self.input_flow is self.INPUT_FLOW_DONE:
             raise AssertionError("input flow ended prematurely")
         else:
@@ -874,7 +910,7 @@ class MessageFilter:
         return cls(type(message), **fields)
 
     def match(self, message: protobuf.MessageType) -> bool:
-        if type(message) != self.message_type:
+        if type(message) is not self.message_type:
             return False
 
         for field, expected_value in self.fields.items():
@@ -956,7 +992,7 @@ class TrezorClientDebugLink(TrezorClient):
 
         # So that we can choose right screenshotting logic (T1 vs TT)
         # and know the supported debug capabilities
-        self.debug.model = self.features.model
+        self.debug.model = self.model
         self.debug.version = self.version
 
     def reset_debug_features(self) -> None:
@@ -1078,12 +1114,24 @@ class TrezorClientDebugLink(TrezorClient):
         # copy expected/actual responses before clearing them
         expected_responses = self.expected_responses
         actual_responses = self.actual_responses
+
+        # grab a copy of the inputflow generator to raise an exception through it
+        if isinstance(self.ui, DebugUI):
+            input_flow = self.ui.input_flow
+        else:
+            input_flow = None
+
         self.reset_debug_features()
 
         if exc_type is None:
             # If no other exception was raised, evaluate missed responses
             # (raises AssertionError on mismatch)
             self._verify_responses(expected_responses, actual_responses)
+
+        elif isinstance(input_flow, Generator):
+            # Propagate the exception through the input flow, so that we see in
+            # traceback where it is stuck.
+            input_flow.throw(exc_type, value, traceback)
 
     def set_expected_responses(
         self, expected: List[Union["ExpectedMessage", Tuple[bool, "ExpectedMessage"]]]
@@ -1223,7 +1271,6 @@ def load_device(
     pin: Optional[str],
     passphrase_protection: bool,
     label: Optional[str],
-    language: str = "en-US",
     skip_checksum: bool = False,
     needs_backup: bool = False,
     no_backup: bool = False,
@@ -1243,7 +1290,6 @@ def load_device(
             mnemonics=mnemonics,
             pin=pin,
             passphrase_protection=passphrase_protection,
-            language=language,
             label=label,
             skip_checksum=skip_checksum,
             needs_backup=needs_backup,
@@ -1259,12 +1305,12 @@ load_device_by_mnemonic = load_device
 
 
 @expect(messages.Success, field="message", ret_type=str)
-def self_test(client: "TrezorClient") -> protobuf.MessageType:
+def prodtest_t1(client: "TrezorClient") -> protobuf.MessageType:
     if client.features.bootloader_mode is not True:
         raise RuntimeError("Device must be in bootloader mode")
 
     return client.call(
-        messages.SelfTest(
+        messages.ProdTestT1(
             payload=b"\x00\xFF\x55\xAA\x66\x99\x33\xCCABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!\x00\xFF\x55\xAA\x66\x99\x33\xCC"
         )
     )

@@ -22,7 +22,7 @@ from trezorlib.exceptions import TrezorFailure
 
 from ...input_flows import InputFlowSlip39BasicRecoveryDryRun
 
-pytestmark = pytest.mark.skip_t1
+pytestmark = pytest.mark.skip_t1b1
 
 SHARES_20_2of3 = [
     "crush merchant academic acid dream decision orbit smug trend trust painting slice glad crunch veteran lunch friar satoshi engage aquatic",
@@ -46,7 +46,6 @@ def test_2of3_dryrun(client: Client):
             passphrase_protection=False,
             pin_protection=False,
             label="label",
-            language="en-US",
             dry_run=True,
         )
 
@@ -71,6 +70,5 @@ def test_2of3_invalid_seed_dryrun(client: Client):
             passphrase_protection=False,
             pin_protection=False,
             label="label",
-            language="en-US",
             dry_run=True,
         )

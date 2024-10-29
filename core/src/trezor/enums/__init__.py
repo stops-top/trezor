@@ -65,6 +65,12 @@ if TYPE_CHECKING:
         UnlockedPathRequest = 94
         ShowDeviceTutorial = 95
         UnlockBootloader = 96
+        AuthenticateDevice = 97
+        AuthenticityProof = 98
+        ChangeLanguage = 990
+        TranslationDataRequest = 991
+        TranslationDataAck = 992
+        SetBrightness = 993
         SetU2FCounter = 63
         GetNextU2FCounter = 80
         NextU2FCounter = 81
@@ -73,7 +79,7 @@ if TYPE_CHECKING:
         FirmwareErase = 6
         FirmwareUpload = 7
         FirmwareRequest = 8
-        SelfTest = 32
+        ProdTestT1 = 32
         GetPublicKey = 11
         PublicKey = 12
         SignTx = 15
@@ -96,10 +102,6 @@ if TYPE_CHECKING:
         SignedIdentity = 54
         GetECDHSessionKey = 61
         ECDHSessionKey = 62
-        CosiCommit = 71
-        CosiCommitment = 72
-        CosiSign = 73
-        CosiSignature = 74
         DebugLinkDecision = 100
         DebugLinkGetState = 101
         DebugLinkState = 102
@@ -162,6 +164,7 @@ if TYPE_CHECKING:
         StellarBumpSequenceOp = 221
         StellarManageBuyOfferOp = 222
         StellarPathPaymentStrictSendOp = 223
+        StellarClaimClaimableBalanceOp = 225
         StellarSignedTx = 230
         CardanoGetPublicKey = 305
         CardanoPublicKey = 306
@@ -252,6 +255,12 @@ if TYPE_CHECKING:
         WebAuthnCredentials = 801
         WebAuthnAddResidentCredential = 802
         WebAuthnRemoveResidentCredential = 803
+        SolanaGetPublicKey = 900
+        SolanaPublicKey = 901
+        SolanaGetAddress = 902
+        SolanaAddress = 903
+        SolanaSignTx = 904
+        SolanaTxSignature = 905
 
     class FailureType(IntEnum):
         UnexpectedMessage = 1
@@ -376,6 +385,15 @@ if TYPE_CHECKING:
         STAKE_DEREGISTRATION = 1
         STAKE_DELEGATION = 2
         STAKE_POOL_REGISTRATION = 3
+        STAKE_REGISTRATION_CONWAY = 7
+        STAKE_DEREGISTRATION_CONWAY = 8
+        VOTE_DELEGATION = 9
+
+    class CardanoDRepType(IntEnum):
+        KEY_HASH = 0
+        SCRIPT_HASH = 1
+        ABSTAIN = 2
+        NO_CONFIDENCE = 3
 
     class CardanoPoolRelayType(IntEnum):
         SINGLE_HOST_IP = 0
@@ -404,6 +422,9 @@ if TYPE_CHECKING:
         Bip39 = 0
         Slip39_Basic = 1
         Slip39_Advanced = 2
+        Slip39_Single_Extendable = 3
+        Slip39_Basic_Extendable = 4
+        Slip39_Advanced_Extendable = 5
 
     class SafetyCheckLevel(IntEnum):
         Strict = 0
@@ -414,6 +435,21 @@ if TYPE_CHECKING:
         Toif = 1
         Jpeg = 2
         ToiG = 3
+
+    class RecoveryType(IntEnum):
+        NormalRecovery = 0
+        DryRun = 1
+        UnlockRepeatedBackup = 2
+
+    class BackupAvailability(IntEnum):
+        NotAvailable = 0
+        Required = 1
+        Available = 2
+
+    class RecoveryStatus(IntEnum):
+        Nothing = 0
+        Recovery = 1
+        Backup = 2
 
     class Capability(IntEnum):
         Bitcoin = 1
@@ -433,13 +469,17 @@ if TYPE_CHECKING:
         Shamir = 15
         ShamirGroups = 16
         PassphraseEntry = 17
+        Solana = 18
+        Translations = 19
+        Brightness = 20
+        Haptic = 21
 
     class SdProtectOperationType(IntEnum):
         DISABLE = 0
         ENABLE = 1
         REFRESH = 2
 
-    class RecoveryDeviceType(IntEnum):
+    class RecoveryDeviceInputMethod(IntEnum):
         ScrambledWords = 0
         Matrix = 1
 
@@ -447,6 +487,10 @@ if TYPE_CHECKING:
         Plain = 0
         Matrix9 = 1
         Matrix6 = 2
+
+    class BootCommand(IntEnum):
+        STOP_AND_WAIT = 0
+        INSTALL_UPGRADE = 1
 
     class DebugSwipeDirection(IntEnum):
         UP = 0
